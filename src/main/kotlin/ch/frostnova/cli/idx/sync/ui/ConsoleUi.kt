@@ -32,7 +32,7 @@ class ConsoleUi(val terminal: Terminal = Terminal()) {
 
     // Palette (user-picked), semantically mapped: main = scan/sync, create = create/success,
     // update = update, delete = delete, error = error, ids = ids/accents, muted = muted.
-    private val main = TextColors.rgb("9e9e9e")
+    private val main = TextColors.rgb("5c6bc0")
     private val create = TextColors.rgb("7ee787")
     private val update = TextColors.rgb("f5c542")
     private val delete = TextColors.rgb("fb923c")
@@ -43,9 +43,14 @@ class ConsoleUi(val terminal: Terminal = Terminal()) {
     // ---- static output --------------------------------------------------------------------------------
 
     fun logo() {
-        terminal.println(main("------------"))
-        terminal.println((bold + main)("$ROCKET Idx SYNC"))
-        terminal.println((bold + main)("------------"))
+        val banner = ConsoleUi::class.java.getResourceAsStream(BANNER)
+            ?.bufferedReader()?.use { it.readText() }
+            ?.trimEnd('\n')
+        if (banner.isNullOrEmpty()) {
+            terminal.println((bold + main)("$ROCKET Idx SYNC"))
+        } else {
+            banner.lines().forEach { terminal.println((bold + main)(it)) }
+        }
     }
 
     /** Usage text, in the original tool's style (command names + their arguments). */
@@ -242,6 +247,7 @@ class ConsoleUi(val terminal: Terminal = Terminal()) {
 
     companion object {
         private const val TICKS = 10_000L
+        private const val BANNER = "/banner.txt"
         private const val ROCKET = "🚀" // 🚀
         private const val SYNC = "🔄"   // 🔄
         private const val CHECK = "✅"        // ✅
