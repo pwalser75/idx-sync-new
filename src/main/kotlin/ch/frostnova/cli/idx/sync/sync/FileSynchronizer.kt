@@ -1,0 +1,105 @@
+package ch.frostnova.cli.idx.sync.sync
+
+import ch.frostnova.cli.idx.sync.core.FileChange
+import ch.frostnova.cli.idx.sync.core.SyncAction
+import ch.frostnova.cli.idx.sync.core.SyncResult
+import java.io.IOException
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.SimpleFileVisitor
+import java.nio.file.attribute.BasicFileAttributes
+import kotlin.io.path.exists
+import kotlin.io.path.fileSize
+import kotlin.io.path.isReadable
+import kotlin.io.path.isRegularFile
+
+/** Observes synchronization progress. Default no-op; the console UI supplies a real implementation. */
+interface SyncListener {
+    fun onChangeStart(change: FileChange, index: Int, total: Int) {}
+
+    /** Incremental bytes copied for the current CREATE/UPDATE change. */
+    fun onBytes(bytesCopied: Long) {}
+    fun onChangeDone(change: FileChange, action: SyncAction) {}
+
+    companion object {
+        val NONE = object : SyncListener {}
+    }
+}
+
+/**
+ * Applies a list of [FileChange]s to disk and reports the aggregate [SyncResult].
+ *
+ * Safety guarantees:
+ *  - every CREATE/UPDATE goes through [AtomicFileWriter], so an abort never corrupts a target;
+ *  - a **0-byte or unreadable source is skipped**, never written — protecting a good backup target from a
+ *    truncated/locked source (the core "safe backup" requirement);
+ *  - failures on individual changes are collected and do not abort the run.
+ */
+class FileSynchronizer(private val writer: AtomicFileWriter = AtomicFileWriter()) {
+
+    fun sync(changes: List<FileChange>, listener: SyncListener = SyncListener.NONE): SyncResult {
+        var result = SyncResult.EMPTY
+        changes.forEachIndexed { index, change ->
+            listener.onChangeStart(change, index, changes.size)
+            result += apply(change, listener)
+        }
+        return result
+    }
+
+    private fun apply(change: FileChange, listener: SyncListener): SyncResult = when (change.action) {
+        SyncAction.CREATE, SyncAction.UPDATE -> copy(change, listener)
+        SyncAction.DELETE -> delete(change, listener)
+        SyncAction.SKIP -> SyncResult(skipped = 1)
+    }
+
+    private fun copy(change: FileChange, listener: SyncListener): SyncResult {
+        val source = change.origin
+        val unsafe = unsafeReason(source)
+        if (unsafe != null) {
+            listener.onChangeDone(change, SyncAction.SKIP)
+            return SyncResult(skipped = 1, warnings = listOf("skipped ${change.relativePath}: $unsafe"))
+        }
+        return try {
+            writer.write(source, change.destination) { listener.onBytes(it) }
+            listener.onChangeDone(change, change.action)
+            val bytes = runCatching { source.fileSize() }.getOrDefault(change.size)
+            when (change.action) {
+                SyncAction.CREATE -> SyncResult(created = 1, bytesTransferred = bytes)
+                else -> SyncResult(updated = 1, bytesTransferred = bytes)
+            }
+        } catch (ex: Exception) {
+            SyncResult(errors = listOf(describe(change, ex)))
+        }
+    }
+
+    private fun delete(change: FileChange, listener: SyncListener): SyncResult = try {
+        deleteRecursively(change.destination)
+        listener.onChangeDone(change, SyncAction.DELETE)
+        SyncResult(deleted = 1)
+    } catch (ex: Exception) {
+        SyncResult(errors = listOf(describe(change, ex)))
+    }
+
+    /** Returns a human-readable reason the [source] is unsafe to copy, or `null` when it is safe. */
+    private fun unsafeReason(source: Path): String? = when {
+        !source.exists() -> "source no longer exists"
+        !source.isRegularFile() -> "source is not a regular file"
+        !source.isReadable() -> "source is not readable"
+        source.fileSize() == 0L -> "source is 0 bytes (protecting target)"
+        else -> null
+    }
+
+    private fun deleteRecursively(path: Path) {
+        if (!path.exists()) return
+        Files.walkFileTree(path, object : SimpleFileVisitor<Path>() {
+            override fun visitFile(file: Path, attrs: BasicFileAttributes) =
+                java.nio.file.FileVisitResult.CONTINUE.also { Files.delete(file) }
+
+            override fun postVisitDirectory(dir: Path, exc: IOException?) =
+                java.nio.file.FileVisitResult.CONTINUE.also { Files.delete(dir) }
+        })
+    }
+
+    private fun describe(change: FileChange, ex: Exception): String =
+        "${change.action.name.lowercase()} ${change.relativePath}: ${ex.javaClass.simpleName}: ${ex.message}"
+}
