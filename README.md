@@ -81,8 +81,22 @@ The marker format is backward-compatible with the original tool.
   source root (gitignore-like).
 - A pattern containing `/` or `**` uses **ant** matching against the path relative to the root
   (`build/**`, `**/*.log`). Note `**/x` matches `x` only at depth ≥ 1.
-- Platform junk (`Thumbs.db`, `.DS_Store`, `System Volume Information`, `$RECYCLE.BIN`, `lost+found`, …) is
-  always excluded.
+- Platform junk (see below) is **always** excluded, on every platform, regardless of your patterns.
+
+### Built-in platform excludes
+
+These system/junk files are always excluded so they never end up in a backup. They are **not** hard-coded —
+they live in the internal resource [`platform-excludes.yaml`](src/main/resources/platform-excludes.yaml) and
+are matched per file/directory name, case-insensitively (excluding a directory prunes its whole subtree).
+
+| Group | Always-excluded names |
+|-------|-----------------------|
+| **idx-sync** (all platforms) | `.idxsync`, and its in-flight temp/backup files `*.idxtmp`, `*.idxbak`, `.*.idxtmp`, `.*.idxbak` |
+| **Windows** | `Thumbs.db`, `ehthumbs.db`, `ehthumbs_vista.db`, `desktop.ini`, `pagefile.sys`, `hiberfil.sys`, `swapfile.sys`, `$RECYCLE.BIN`, `RECYCLER`, `System Volume Information`, `MSOCache`, `$Windows.~BT`, `$Windows.~WS` |
+| **macOS** | `.DS_Store`, `._*` (AppleDouble resource forks), `.AppleDouble`, `.LSOverride`, `.DocumentRevisions-V100`, `.fseventsd`, `.Spotlight-V100`, `.TemporaryItems`, `.Trashes`, `.VolumeIcon.icns`, `.com.apple.timemachine.donotpresent`, `.AppleDB`, `.AppleDesktop`, `.apdisk`, `Network Trash Folder`, `Temporary Items` |
+| **Linux** | `.directory`, `lost+found`, `.Trash-*`, `.nfs*`, `.fuse_hidden*` |
+
+To add or change one, edit `platform-excludes.yaml` — no code change needed.
 
 ## How a sync decides changes
 

@@ -1,10 +1,17 @@
 package ch.frostnova.cli.idx.sync.filter
 
+import com.fasterxml.jackson.annotation.JsonProperty
+import com.fasterxml.jackson.dataformat.yaml.YAMLMapper
+import com.fasterxml.jackson.module.kotlin.readValue
+import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+
 /**
  * Built-in, always-on exclusion of platform system/junk files that must never be part of a backup
- * (Windows, macOS, Linux) plus idx-sync's own control files. Matching is per path *segment* (a single
- * file/directory name) and case-insensitive, so excluding a directory name (e.g. `System Volume
- * Information`) naturally prunes its whole subtree.
+ * (Windows, macOS, Linux) plus idx-sync's own control files. The rules are **not** hard-coded here — they
+ * are loaded from the internal resource `platform-excludes.yaml`, grouped per platform.
+ *
+ * Matching is per path *segment* (a single file/directory name) and case-insensitive, so excluding a
+ * directory name (e.g. `System Volume Information`) naturally prunes its whole subtree.
  */
 class PlatformExcludes(
     exactNames: Set<String>,
@@ -22,42 +29,29 @@ class PlatformExcludes(
         globs = (globMatchers + other.globMatchers).map { it.pattern },
     )
 
+    /** One platform's section of the internal YAML config. */
+    private data class Section(
+        @param:JsonProperty("exact-names") @get:JsonProperty("exact-names")
+        val exactNames: Set<String> = emptySet(),
+        val globs: List<String> = emptyList(),
+    )
+
+    private data class Config(val platforms: Map<String, Section> = emptyMap())
+
     companion object {
-        /** idx-sync's own files: the marker and any in-flight temp/backup files (see AtomicFileWriter). */
-        val IDX = PlatformExcludes(
-            exactNames = setOf(".idxsync"),
-            globs = listOf("*.idxtmp", "*.idxbak", ".*.idxtmp", ".*.idxbak"),
-        )
-
-        val WINDOWS = PlatformExcludes(
-            exactNames = setOf(
-                "thumbs.db", "ehthumbs.db", "ehthumbs_vista.db", "desktop.ini",
-                "pagefile.sys", "hiberfil.sys", "swapfile.sys",
-                "\$recycle.bin", "recycler", "system volume information",
-                "msocache", "\$windows.~bt", "\$windows.~ws",
-            ),
-            globs = emptyList(),
-        )
-
-        val MACOS = PlatformExcludes(
-            exactNames = setOf(
-                ".ds_store", ".appledouble", ".lsoverride", ".documentrevisions-v100",
-                ".fseventsd", ".spotlight-v100", ".temporaryitems", ".trashes",
-                ".volumeicon.icns", ".com.apple.timemachine.donotpresent",
-                ".appledb", ".appledesktop", ".apdisk",
-                "network trash folder", "temporary items",
-            ),
-            globs = listOf("._*"),
-        )
-
-        val LINUX = PlatformExcludes(
-            exactNames = setOf(".directory", "lost+found"),
-            globs = listOf(".trash-*", ".nfs*", ".fuse_hidden*"),
-        )
-
-        /** Every platform's junk plus idx-sync's own files. This is the default filter set. */
-        val ALL: PlatformExcludes = IDX + WINDOWS + MACOS + LINUX
+        const val RESOURCE = "/platform-excludes.yaml"
 
         val NONE = PlatformExcludes(emptySet(), emptyList())
+
+        /** Every platform's junk plus idx-sync's own files, loaded from [RESOURCE]. The default filter set. */
+        val ALL: PlatformExcludes by lazy { load() }
+
+        private fun load(): PlatformExcludes {
+            val mapper = YAMLMapper().registerKotlinModule()
+            val config = PlatformExcludes::class.java.getResourceAsStream(RESOURCE)
+                ?.use { mapper.readValue<Config>(it) }
+                ?: error("Missing internal resource $RESOURCE")
+            return config.platforms.values.fold(NONE) { acc, s -> acc + PlatformExcludes(s.exactNames, s.globs) }
+        }
     }
 }

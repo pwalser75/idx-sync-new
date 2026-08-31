@@ -48,7 +48,7 @@ class DemoRunner(private val ui: ConsoleUi, private val random: Random = Random(
         ui.pendingChanges(
             files.count { it.action == SyncAction.CREATE },
             files.count { it.action == SyncAction.UPDATE },
-            0,
+            files.count { it.action == SyncAction.DELETE },
         )
         ui.blank()
 
@@ -68,27 +68,37 @@ class DemoRunner(private val ui: ConsoleUi, private val random: Random = Random(
         val totalBytes = files.sumOf { it.size }.coerceAtLeast(1)
         var created = 0
         var updated = 0
+        var deleted = 0
         files.forEachIndexed { index, file ->
             listener.onChangeStart(file, index, files.size)
-            var remaining = file.size
-            val chunk = (file.size / 12).coerceAtLeast(1)
-            while (remaining > 0) {
-                val n = minOf(chunk, remaining)
-                listener.onBytes(n)
-                remaining -= n
-                sleep(copyMillis * n / totalBytes)
+            if (file.action == SyncAction.DELETE) {
+                deleted++
+                sleep(90) // deletions are quick, but visible
+            } else {
+                var remaining = file.size
+                val chunk = (file.size / 12).coerceAtLeast(1)
+                while (remaining > 0) {
+                    val n = minOf(chunk, remaining)
+                    listener.onBytes(n)
+                    remaining -= n
+                    sleep(copyMillis * n / totalBytes)
+                }
+                if (file.action == SyncAction.CREATE) created++ else updated++
             }
-            if (file.action == SyncAction.CREATE) created++ else updated++
         }
-        return SyncResult(created = created, updated = updated, bytesTransferred = totalBytes)
+        return SyncResult(created = created, updated = updated, deleted = deleted, bytesTransferred = totalBytes)
     }
 
     private fun syntheticFiles(): List<FileChange> = buildList {
-        repeat(18) {
+        repeat(15) {
             val action = if (random.nextInt(3) == 0) SyncAction.UPDATE else SyncAction.CREATE
             val size = random.nextLong(200_000L, 8_000_000L)
             val rel = Path.of("${randomFolder()}/${randomBaseName()}.${randomExt()}")
             add(FileChange(rel, Path.of("/src").resolve(rel), Path.of("/dst").resolve(rel), action, size))
+        }
+        repeat(3) {
+            val rel = Path.of("${randomFolder()}/${randomBaseName()}.${randomExt()}")
+            add(FileChange(rel, Path.of("/src").resolve(rel), Path.of("/dst").resolve(rel), SyncAction.DELETE, 0))
         }
     }
 

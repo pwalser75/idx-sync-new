@@ -161,7 +161,8 @@ class ConsoleUi(val terminal: Terminal = Terminal()) {
         return try {
             block { detail -> anim.update { context = "$title  " + muted(ellipsize(detail, 60)) } }
         } finally {
-            anim.stop(); runCatching { future.get() }; runCatching { anim.clear() }
+            // clear() (not stop()) erases the line in place, so the caller's summary takes its position.
+            runCatching { anim.clear() }; runCatching { future.get() }
         }
     }
 
@@ -184,8 +185,7 @@ class ConsoleUi(val terminal: Terminal = Terminal()) {
                 }
             }
         } finally {
-            anim.update { completed = TICKS }
-            anim.stop(); runCatching { future.get() }; runCatching { anim.clear() }
+            runCatching { anim.clear() }; runCatching { future.get() }
         }
     }
 
@@ -220,8 +220,7 @@ class ConsoleUi(val terminal: Terminal = Terminal()) {
         return try {
             run(listener)
         } finally {
-            anim.update { completed = total }
-            anim.stop(); runCatching { future.get() }; runCatching { anim.clear() }
+            runCatching { anim.clear() }; runCatching { future.get() }
         }
     }
 

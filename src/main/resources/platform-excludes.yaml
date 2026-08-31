@@ -1,0 +1,62 @@
+# Internal, always-on exclusion of platform system/junk files that must never be part of a backup,
+# plus idx-sync's own control files. Loaded at startup by PlatformExcludes.
+#
+# Matching is per path *segment* (a single file/directory name) and case-insensitive, so excluding a
+# directory name (e.g. "System Volume Information") naturally prunes its whole subtree.
+#   exact-names : full names matched exactly (case-insensitively)
+#   globs       : ant-style name globs (*, ?) matched against a single segment
+platforms:
+
+  idx-sync:
+    exact-names:
+      - .idxsync
+    globs:
+      - "*.idxtmp"
+      - "*.idxbak"
+      - ".*.idxtmp"
+      - ".*.idxbak"
+
+  windows:
+    exact-names:
+      - Thumbs.db
+      - ehthumbs.db
+      - ehthumbs_vista.db
+      - desktop.ini
+      - pagefile.sys
+      - hiberfil.sys
+      - swapfile.sys
+      - "$RECYCLE.BIN"
+      - RECYCLER
+      - System Volume Information
+      - MSOCache
+      - "$Windows.~BT"
+      - "$Windows.~WS"
+
+  macos:
+    exact-names:
+      - .DS_Store
+      - .AppleDouble
+      - .LSOverride
+      - .DocumentRevisions-V100
+      - .fseventsd
+      - .Spotlight-V100
+      - .TemporaryItems
+      - .Trashes
+      - .VolumeIcon.icns
+      - .com.apple.timemachine.donotpresent
+      - .AppleDB
+      - .AppleDesktop
+      - .apdisk
+      - Network Trash Folder
+      - Temporary Items
+    globs:
+      - "._*"
+
+  linux:
+    exact-names:
+      - .directory
+      - lost+found
+    globs:
+      - ".Trash-*"
+      - ".nfs*"
+      - ".fuse_hidden*"
