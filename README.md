@@ -1,5 +1,7 @@
 # idx-sync
 
+![Screenshot](screenshot.png)
+
 A fast, safe, one-way folder **synchronization / backup** CLI, written in idiomatic Kotlin.
 
 `idx-sync` auto-detects synchronizable folder pairs across your mounted drives (USB sticks, external

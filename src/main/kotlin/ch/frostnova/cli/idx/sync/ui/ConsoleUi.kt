@@ -32,13 +32,13 @@ class ConsoleUi(val terminal: Terminal = Terminal()) {
 
     // Palette (user-picked), semantically mapped: main = scan/sync, create = create/success,
     // update = update, delete = delete, error = error, ids = ids/accents, muted = muted.
-    private val main = TextColors.rgb("5c6bc0")
-    private val create = TextColors.rgb("7ee787")
-    private val update = TextColors.rgb("f5c542")
+    private val main   = TextColors.rgb("737373")
+    private val create = TextColors.rgb("84cc16")
+    private val update = TextColors.rgb("fbbf24")
     private val delete = TextColors.rgb("fb923c")
-    private val error = TextColors.rgb("ef4444")
-    private val ids = TextColors.rgb("5fafff")
-    private val muted = TextColors.rgb("9e9e9e")
+    private val error  = TextColors.rgb("f87171")
+    private val ids    = TextColors.rgb("60a5fa")
+    private val muted  = TextColors.rgb("9e9e9e")
 
     // ---- static output --------------------------------------------------------------------------------
 
@@ -51,6 +51,7 @@ class ConsoleUi(val terminal: Terminal = Terminal()) {
         } else {
             banner.lines().forEach { terminal.println((bold + main)(it)) }
         }
+        terminal.println()
     }
 
     /** Usage text, in the original tool's style (command names + their arguments). */

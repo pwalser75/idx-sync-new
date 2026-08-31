@@ -15,6 +15,7 @@ platforms:
       - "*.idxbak"
       - ".*.idxtmp"
       - ".*.idxbak"
+      - ".*.bak"
 
   windows:
     exact-names:
