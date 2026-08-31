@@ -30,27 +30,27 @@ import com.github.ajalt.mordant.widgets.progress.timeRemaining
  */
 class ConsoleUi(val terminal: Terminal = Terminal()) {
 
-    // Palette (user-picked), semantically mapped: blue = scan/sync, green = create/success,
-    // yellow = update, orange = delete, red = error, cyan = ids/accents, gray = muted.
-    private val blue = TextColors.rgb("9e9e9e")
-    private val green = TextColors.rgb("7ee787")
-    private val yellow = TextColors.rgb("f5c542")
-    private val orange = TextColors.rgb("fb923c")
-    private val red = TextColors.rgb("ef4444")
-    private val cyan = TextColors.rgb("5fafff")
-    private val gray = TextColors.rgb("9e9e9e")
+    // Palette (user-picked), semantically mapped: main = scan/sync, create = create/success,
+    // update = update, delete = delete, error = error, ids = ids/accents, muted = muted.
+    private val main = TextColors.rgb("9e9e9e")
+    private val create = TextColors.rgb("7ee787")
+    private val update = TextColors.rgb("f5c542")
+    private val delete = TextColors.rgb("fb923c")
+    private val error = TextColors.rgb("ef4444")
+    private val ids = TextColors.rgb("5fafff")
+    private val muted = TextColors.rgb("9e9e9e")
 
     // ---- static output --------------------------------------------------------------------------------
 
     fun logo() {
-        terminal.println(blue("------------"))
-        terminal.println((bold + blue)("$ROCKET Idx SYNC"))
-        terminal.println((bold + blue)("------------"))
+        terminal.println(main("------------"))
+        terminal.println((bold + main)("$ROCKET Idx SYNC"))
+        terminal.println((bold + main)("------------"))
     }
 
     /** Usage text, in the original tool's style (command names + their arguments). */
     fun usage() {
-        line("Usage: ${(bold + cyan)("idx-sync [command] [args]...")}")
+        line("Usage: ${(bold + ids)("idx-sync [command] [args]...")}")
         line("Commands:")
         cmd("scan", "", "Scan for sync files and show matching pairs")
         cmd("diff", "", "Scan for sync files, compare matching pairs and report changes")
@@ -63,16 +63,16 @@ class ConsoleUi(val terminal: Terminal = Terminal()) {
     }
 
     private fun cmd(name: String, args: String, description: String) {
-        val head = (bold + green)(name.padEnd(7))
-        val argText = if (args.isEmpty()) "" else " ${gray(args)}"
+        val head = (bold + create)(name.padEnd(7))
+        val argText = if (args.isEmpty()) "" else " ${muted(args)}"
         line("- $head$argText: $description")
     }
 
     fun line(text: String) = terminal.println(text)
     fun info(text: String) = terminal.println(text)
-    fun success(text: String) = terminal.println(green(text))
-    fun warn(text: String) = terminal.println(yellow(text))
-    fun error(text: String) = terminal.println("$ERROR ${red(text)}")
+    fun success(text: String) = terminal.println(create(text))
+    fun warn(text: String) = terminal.println(update(text))
+    fun error(text: String) = terminal.println("$ERROR ${error.invoke(text)}")
     fun blank() = terminal.println()
 
     /** List the discovered markers, in the original tool's format. */
@@ -83,11 +83,11 @@ class ConsoleUi(val terminal: Terminal = Terminal()) {
         }
         line("Found following .idxsync files:")
         markers.sortedWith(compareBy({ it.file.isTarget }, { it.file.folderName ?: "" })).forEach { m ->
-            val id = (bold + cyan)(m.file.folderId ?: "?")
+            val id = (bold + ids)(m.file.folderId ?: "?")
             if (m.file.isTarget) {
-                line("- $SYNC $id: source = ${cyan(m.file.sourceFolderId ?: "?")} in ${m.dir}")
+                line("- $SYNC $id: source = ${ids(m.file.sourceFolderId ?: "?")} in ${m.dir}")
             } else {
-                line("- $SYNC $id: ${cyan(m.file.folderName ?: "")}, in ${m.dir}")
+                line("- $SYNC $id: ${ids(m.file.folderName ?: "")}, in ${m.dir}")
             }
         }
     }
@@ -99,32 +99,32 @@ class ConsoleUi(val terminal: Terminal = Terminal()) {
             return
         }
         line("Matching sync folders found:")
-        pairs.forEach { p -> line("- $CHECK ${(bold + green)(p.name)} ${p.source} -> ${p.target}") }
+        pairs.forEach { p -> line("- $CHECK ${(bold + create)(p.name)} ${p.source} -> ${p.target}") }
     }
 
     /** Report overlapping pairs (source/target nested) that are skipped. */
     fun listOverlappingPairs(pairs: List<SyncPair>) {
         if (pairs.isEmpty()) return
-        line(orange("Overlapping folder pairs (skipped — source and target overlap):"))
-        pairs.forEach { p -> line(orange("- $WARN ${(bold + orange)(p.name)} ${p.source} <-> ${p.target}")) }
+        line(delete("Overlapping folder pairs (skipped — source and target overlap):"))
+        pairs.forEach { p -> line(delete("- $WARN ${(bold + delete)(p.name)} ${p.source} <-> ${p.target}")) }
     }
 
     /** Detailed per-file change listing (used by `diff`), coloured by action. */
     fun listChanges(changes: List<ch.frostnova.cli.idx.sync.core.FileChange>) {
         changes.filter { it.action == ch.frostnova.cli.idx.sync.core.SyncAction.CREATE }
-            .forEach { line(green("+ ${it.relativePath} [${formatBytes(it.size)}]")) }
+            .forEach { line(create("+ ${it.relativePath} [${formatBytes(it.size)}]")) }
         changes.filter { it.action == ch.frostnova.cli.idx.sync.core.SyncAction.UPDATE }
-            .forEach { line(yellow("* ${it.relativePath} [${formatBytes(it.size)}]")) }
+            .forEach { line(update("* ${it.relativePath} [${formatBytes(it.size)}]")) }
         changes.filter { it.action == ch.frostnova.cli.idx.sync.core.SyncAction.DELETE }
-            .forEach { line(orange("- ${it.relativePath}")) }
+            .forEach { line(delete("- ${it.relativePath}")) }
     }
 
     /** One-line summary of pending changes, in the original tool's phrasing. */
     fun pendingChanges(created: Int, updated: Int, deleted: Int) {
         val parts = buildList {
-            if (created > 0) add("${(bold + green)("$created")} files created")
-            if (updated > 0) add("${(bold + yellow)("$updated")} files updated")
-            if (deleted > 0) add("${(bold + orange)("$deleted")} files deleted")
+            if (created > 0) add("${(bold + create)("$created")} files created")
+            if (updated > 0) add("${(bold + update)("$updated")} files updated")
+            if (deleted > 0) add("${(bold + delete)("$deleted")} files deleted")
         }
         if (parts.isEmpty()) line("No changes since last sync.")
         else line("Changes since last sync: ${parts.joinToString(", ")}")
@@ -134,18 +134,18 @@ class ConsoleUi(val terminal: Terminal = Terminal()) {
     fun report(mode: SyncMode, result: SyncResult, elapsedSeconds: Double) {
         val title = if (mode == SyncMode.RESTORE) "Restore result" else "Sync result"
         if (result.isEmpty) {
-            line("$CHECK ${(bold + green)("Done")}, everything already up to date (${formatDuration(elapsedSeconds)}).")
+            line("$CHECK ${(bold + create)("Done")}, everything already up to date (${formatDuration(elapsedSeconds)}).")
             return
         }
-        line("${(bold + blue)(title)}:")
-        if (result.created > 0) line("- ${(bold + green)("${result.created}")} files created")
-        if (result.updated > 0) line("- ${(bold + yellow)("${result.updated}")} files updated")
-        if (result.deleted > 0) line("- ${(bold + orange)("${result.deleted}")} files deleted")
-        if (result.skipped > 0) line("- ${(bold + yellow)("${result.skipped}")} files skipped")
-        if (result.bytesTransferred > 0) line("- ${(bold + yellow)(formatBytes(result.bytesTransferred))} transferred")
+        line("${(bold + main)(title)}:")
+        if (result.created > 0) line("- ${(bold + create)("${result.created}")} files created")
+        if (result.updated > 0) line("- ${(bold + update)("${result.updated}")} files updated")
+        if (result.deleted > 0) line("- ${(bold + delete)("${result.deleted}")} files deleted")
+        if (result.skipped > 0) line("- ${(bold + update)("${result.skipped}")} files skipped")
+        if (result.bytesTransferred > 0) line("- ${(bold + update)(formatBytes(result.bytesTransferred))} transferred")
         result.warnings.forEach { warn("  ! $it") }
-        result.errors.forEach { line("  ${red("$ERROR $it")}") }
-        line("- done in ${(bold + cyan)(formatDuration(elapsedSeconds))}")
+        result.errors.forEach { line("  ${error.invoke("$ERROR $it")}") }
+        line("- done in ${(bold + ids)(formatDuration(elapsedSeconds))}")
     }
 
     // ---- progress -------------------------------------------------------------------------------------
@@ -153,13 +153,13 @@ class ConsoleUi(val terminal: Terminal = Terminal()) {
     /** Indeterminate phase (comparing) with a spinner; cleared when done. */
     fun <T> spinner(title: String, block: (setDetail: (String) -> Unit) -> T): T {
         val layout = progressBarContextLayout<String> {
-            spinner(Spinner.Dots(style = cyan))
+            spinner(Spinner.Dots(style = ids))
             text(align = TextAlign.LEFT) { context }
         }
         val anim = layout.animateOnThread(terminal, title, null)
         val future = anim.execute()
         return try {
-            block { detail -> anim.update { context = "$title  " + gray(ellipsize(detail, 60)) } }
+            block { detail -> anim.update { context = "$title  " + muted(ellipsize(detail, 60)) } }
         } finally {
             anim.stop(); runCatching { future.get() }; runCatching { anim.clear() }
         }
@@ -171,7 +171,7 @@ class ConsoleUi(val terminal: Terminal = Terminal()) {
         val layout = progressBarContextLayout<String> {
             text(align = TextAlign.LEFT) { context }
             // No explicit width -> the bar expands to fill the remaining terminal width.
-            progressBar(completeStyle = blue, finishedStyle = blue)
+            progressBar(completeStyle = main, finishedStyle = main)
             percentage()
         }
         val anim = layout.animateOnThread(terminal, title, TICKS)
@@ -198,7 +198,7 @@ class ConsoleUi(val terminal: Terminal = Terminal()) {
         val layout = progressBarContextLayout<String> {
             text(align = TextAlign.LEFT) { context }
             // No explicit width -> the bar expands to fill the remaining terminal width.
-            progressBar(completeStyle = blue, finishedStyle = blue)
+            progressBar(completeStyle = main, finishedStyle = main)
             percentage()
             speed("B/s")
             timeRemaining()
@@ -227,7 +227,7 @@ class ConsoleUi(val terminal: Terminal = Terminal()) {
 
     /** Ask a yes/no question on the same line; defaults to No (safe) on empty/non-interactive input. */
     fun confirm(question: String): Boolean {
-        terminal.print(yellow("$question (y/N) "))
+        terminal.print(update("$question (y/N) "))
         val answer = runCatching { readlnOrNull() }.getOrNull()?.trim()?.lowercase()
         return answer == "y" || answer == "yes"
     }
