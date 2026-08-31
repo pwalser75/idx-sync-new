@@ -142,7 +142,7 @@ class ConsoleUi(val terminal: Terminal = Terminal()) {
         if (result.updated > 0) line("- ${(bold + update)("${result.updated}")} files updated")
         if (result.deleted > 0) line("- ${(bold + delete)("${result.deleted}")} files deleted")
         if (result.skipped > 0) line("- ${(bold + update)("${result.skipped}")} files skipped")
-        if (result.bytesTransferred > 0) line("- ${(bold + update)(formatBytes(result.bytesTransferred))} transferred")
+        if (result.bytesTransferred > 0) line("- ${(bold + ids)(formatBytes(result.bytesTransferred))} transferred")
         result.warnings.forEach { warn("  ! $it") }
         result.errors.forEach { line("  ${error.invoke("$ERROR $it")}") }
         line("- done in ${(bold + ids)(formatDuration(elapsedSeconds))}")

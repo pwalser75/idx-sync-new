@@ -57,3 +57,11 @@ tasks.shadowJar {
     archiveClassifier = ""
     archiveVersion = ""
 }
+
+// The default build produces the executable fat jar; `build` always includes shadowJar.
+tasks.build {
+    dependsOn(tasks.shadowJar)
+}
+
+// Running `gradle` with no arguments does a clean build that produces the shadow jar.
+defaultTasks("clean", "build", "shadowJar")
