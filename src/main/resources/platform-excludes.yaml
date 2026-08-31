@@ -15,7 +15,11 @@ platforms:
       - "*.idxbak"
       - ".*.idxtmp"
       - ".*.idxbak"
-      - ".*.bak"
+
+  # Generic, cross-platform editor/temp/backup artifacts (regenerable, safe to skip).
+  editors-and-temp:
+    globs:
+      - "*.bak"
 
   windows:
     exact-names:

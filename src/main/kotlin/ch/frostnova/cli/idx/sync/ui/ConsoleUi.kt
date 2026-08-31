@@ -32,7 +32,7 @@ class ConsoleUi(val terminal: Terminal = Terminal()) {
 
     // Palette (user-picked), semantically mapped: main = scan/sync, create = create/success,
     // update = update, delete = delete, error = error, ids = ids/accents, muted = muted.
-    private val main   = TextColors.rgb("737373")
+    private val main   = TextColors.rgb("01b9f9")
     private val create = TextColors.rgb("84cc16")
     private val update = TextColors.rgb("fbbf24")
     private val delete = TextColors.rgb("fb923c")
