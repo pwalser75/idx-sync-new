@@ -45,7 +45,7 @@ class FileSynchronizerTest {
     }
 
     @Test
-    fun `skips a 0-byte source and never destroys the target`(@TempDir dir: Path) {
+    fun `skips a 0-byte source only when the target has real content`(@TempDir dir: Path) {
         val emptySource = dir.resolve("empty.txt").apply { writeText("") }
         val target = dir.resolve("t/empty.txt").apply { parent.createDirectories(); writeText("GOOD BACKUP DATA") }
 
@@ -56,6 +56,23 @@ class FileSynchronizerTest {
         assertThat(result.skipped).isEqualTo(1)
         assertThat(result.warnings).hasSize(1)
         assertThat(result.warnings.single()).contains("0 bytes")
+    }
+
+    @Test
+    fun `backs up a genuinely empty file when the target is absent or empty`(@TempDir dir: Path) {
+        val emptySource = dir.resolve("empty.txt").apply { writeText("") }
+        val absentTarget = dir.resolve("t/empty.txt")
+
+        val created = synchronizer.sync(listOf(change(SyncAction.CREATE, emptySource, absentTarget)))
+        assertThat(absentTarget.exists()).isTrue()
+        assertThat(absentTarget.readText()).isEmpty()
+        assertThat(created.created).isEqualTo(1)
+        assertThat(created.skipped).isEqualTo(0)
+
+        // an already-empty target is also fine to overwrite with an empty source
+        val emptyTarget = dir.resolve("t2/empty.txt").apply { parent.createDirectories(); writeText("") }
+        val again = synchronizer.sync(listOf(change(SyncAction.UPDATE, emptySource, emptyTarget)))
+        assertThat(again.skipped).isEqualTo(0)
     }
 
     @Test

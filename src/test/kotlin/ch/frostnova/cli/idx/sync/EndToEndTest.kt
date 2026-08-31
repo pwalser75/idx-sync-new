@@ -47,12 +47,12 @@ class EndToEndTest {
     }
 
     @Test
-    fun `mirrors source to target, skips excluded and 0-byte, deletes obsolete`(@TempDir root: Path) {
+    fun `mirrors source to target, skips excluded, creates empty, deletes obsolete`(@TempDir root: Path) {
         val (source, target) = setup(root)
         file(source, "a.txt", "hello")
         file(source, "sub/b.txt", "world")
         file(source, "skip/ignored.txt", "nope")   // excluded by pattern
-        file(source, "empty.txt", "")               // 0-byte -> skipped
+        file(source, "empty.txt", "")               // 0-byte, no target -> created empty
         file(target, "obsolete.txt", "remove me")   // not in source -> deleted
 
         val result = fullSync(root)
@@ -60,10 +60,11 @@ class EndToEndTest {
         assertThat(target.resolve("a.txt").readText()).isEqualTo("hello")
         assertThat(target.resolve("sub/b.txt").readText()).isEqualTo("world")
         assertThat(target.resolve("skip/ignored.txt").exists()).isFalse()
-        assertThat(target.resolve("empty.txt").exists()).isFalse()
+        assertThat(target.resolve("empty.txt").exists()).isTrue()   // genuinely empty file is backed up
+        assertThat(target.resolve("empty.txt").readText()).isEmpty()
         assertThat(target.resolve("obsolete.txt").exists()).isFalse()
-        assertThat(result.created).isEqualTo(2)
-        assertThat(result.skipped).isEqualTo(1)
+        assertThat(result.created).isEqualTo(3)
+        assertThat(result.skipped).isEqualTo(0)
         assertThat(result.deleted).isEqualTo(1)
         assertThat(result.errors).isEmpty()
 

@@ -23,8 +23,8 @@ class IdxSync(private val ui: ConsoleUi) : CliktCommand() {
     override fun run() = ui.logo()
 }
 
-class Run(private val app: SyncApplication) : CliktCommand() {
-    override fun help(context: Context) = "Scan, compare and synchronize all matching folder pairs (default)"
+class Sync(private val app: SyncApplication) : CliktCommand() {
+    override fun help(context: Context) = "Scan, compare and synchronize all matching folder pairs"
     override fun run() = app.run(SyncMode.SYNC)
 }
 

@@ -1,9 +1,12 @@
 package ch.frostnova.cli.idx.sync.cli
 
+import ch.frostnova.cli.idx.sync.config.IdxSyncFile
 import ch.frostnova.cli.idx.sync.core.FileChange
 import ch.frostnova.cli.idx.sync.core.SyncAction
 import ch.frostnova.cli.idx.sync.core.SyncMode
 import ch.frostnova.cli.idx.sync.core.SyncResult
+import ch.frostnova.cli.idx.sync.scan.DiscoveredMarker
+import ch.frostnova.cli.idx.sync.scan.SyncPairResolver
 import ch.frostnova.cli.idx.sync.sync.SyncListener
 import ch.frostnova.cli.idx.sync.ui.ConsoleUi
 import java.nio.file.Path
@@ -11,7 +14,7 @@ import kotlin.random.Random
 
 /**
  * Simulates a full sync run over a fixed wall-clock [totalMillis] to exercise the console UI without
- * touching the file system. Nothing is read or written; every "file" and byte is synthetic.
+ * touching the file system. Nothing is read or written; every "folder", "file" and byte is synthetic.
  */
 class DemoRunner(private val ui: ConsoleUi, private val random: Random = Random(42)) {
 
@@ -23,31 +26,43 @@ class DemoRunner(private val ui: ConsoleUi, private val random: Random = Random(
         val compareMillis = (totalMillis * 0.15).toLong()
         val copyMillis = totalMillis - scanMillis - compareMillis
 
-        ui.heading("Demo mode — simulating a backup run")
-        ui.info("(no files are read or written)")
+        ui.info("(demo mode — no files are read or written)")
         ui.blank()
 
-        ui.spinner("Scanning file system") { detail ->
-            animate(scanMillis) { detail(randomDir()) }
+        ui.fractionProgress("Scanning for sync files") { report -> animateFraction(scanMillis, report) }
+
+        val markers = fakeMarkers()
+        val pairs = SyncPairResolver().resolve(markers)
+        ui.listFoundMarkers(markers)
+        ui.blank()
+        ui.listMatchingPairs(pairs)
+        ui.blank()
+
+        pairs.forEach { pair ->
+            ui.spinner("Comparing ${pair.name}") { detail ->
+                animateDetail(compareMillis / pairs.size.coerceAtLeast(1)) { detail(randomFile()) }
+            }
         }
-        ui.success("Found 2 sync pair(s):")
-        ui.bullet("Photos:  /media/sd-card/DCIM  →  /mnt/backup/Photos")
-        ui.bullet("Documents:  /home/demo/Documents  →  /mnt/backup/Documents")
-        ui.blank()
-
-        ui.spinner("Comparing Photos") { detail -> animate(compareMillis / 2) { detail(randomFile()) } }
-        ui.spinner("Comparing Documents") { detail -> animate(compareMillis / 2) { detail(randomFile()) } }
-        ui.blank()
 
         val files = syntheticFiles()
-        val totalBytes = files.sumOf { it.size }
-        ui.step("Pending changes: ${files.count { it.action == SyncAction.CREATE }} to create, " +
-            "${files.count { it.action == SyncAction.UPDATE }} to update")
+        ui.pendingChanges(
+            files.count { it.action == SyncAction.CREATE },
+            files.count { it.action == SyncAction.UPDATE },
+            0,
+        )
         ui.blank()
 
+        val totalBytes = files.sumOf { it.size }
         val result = ui.copyProgress(totalBytes) { listener -> simulateCopy(files, copyMillis, listener) }
-        ui.summary(SyncMode.SYNC, result, (System.nanoTime() - start) / 1e9)
+        ui.report(SyncMode.SYNC, result, (System.nanoTime() - start) / 1e9)
     }
+
+    private fun fakeMarkers(): List<DiscoveredMarker> = listOf(
+        DiscoveredMarker(IdxSyncFile(folderId = "photos-src", folderName = "Photos", includeHidden = true), Path.of("/media/sd-card/DCIM")),
+        DiscoveredMarker(IdxSyncFile(folderId = "photos-tgt", sourceFolderId = "photos-src"), Path.of("/mnt/backup/Photos")),
+        DiscoveredMarker(IdxSyncFile(folderId = "docs-src", folderName = "Documents", includeHidden = true), Path.of("/home/demo/Documents")),
+        DiscoveredMarker(IdxSyncFile(folderId = "docs-tgt", sourceFolderId = "docs-src"), Path.of("/mnt/backup/Documents")),
+    )
 
     private fun simulateCopy(files: List<FileChange>, copyMillis: Long, listener: SyncListener): SyncResult {
         val totalBytes = files.sumOf { it.size }.coerceAtLeast(1)
@@ -61,7 +76,6 @@ class DemoRunner(private val ui: ConsoleUi, private val random: Random = Random(
                 val n = minOf(chunk, remaining)
                 listener.onBytes(n)
                 remaining -= n
-                // spread the copy phase across copyMillis in proportion to bytes
                 sleep(copyMillis * n / totalBytes)
             }
             if (file.action == SyncAction.CREATE) created++ else updated++
@@ -70,19 +84,28 @@ class DemoRunner(private val ui: ConsoleUi, private val random: Random = Random(
     }
 
     private fun syntheticFiles(): List<FileChange> = buildList {
-        repeat(18) { i ->
+        repeat(18) {
             val action = if (random.nextInt(3) == 0) SyncAction.UPDATE else SyncAction.CREATE
-            val size = (200_000L..8_000_000L).random(random)
+            val size = random.nextLong(200_000L, 8_000_000L)
             val rel = Path.of("${randomFolder()}/${randomBaseName()}.${randomExt()}")
             add(FileChange(rel, Path.of("/src").resolve(rel), Path.of("/dst").resolve(rel), action, size))
         }
     }
 
-    private fun animate(millis: Long, tick: () -> Unit) {
+    private fun animateFraction(millis: Long, report: (Double, Any) -> Unit) {
+        val startNs = System.nanoTime()
+        val endNs = startNs + millis * 1_000_000
+        while (System.nanoTime() < endNs) {
+            report((System.nanoTime() - startNs).toDouble() / (endNs - startNs), randomDir())
+            sleep(60)
+        }
+        report(1.0, randomDir())
+    }
+
+    private fun animateDetail(millis: Long, tick: () -> Unit) {
         val deadline = System.nanoTime() + millis * 1_000_000
         while (System.nanoTime() < deadline) {
-            tick()
-            sleep(60)
+            tick(); sleep(60)
         }
     }
 
@@ -95,8 +118,6 @@ class DemoRunner(private val ui: ConsoleUi, private val random: Random = Random(
     private fun randomFolder() = FOLDERS.random(random)
     private fun randomBaseName() = NAMES.random(random) + "_" + random.nextInt(1000)
     private fun randomExt() = EXTS.random(random)
-
-    private fun LongRange.random(rnd: Random) = rnd.nextLong(first, last + 1)
 
     companion object {
         private val FOLDERS = listOf("media", "backup", "Documents", "Photos", "projects", "music", "2026", "archive")

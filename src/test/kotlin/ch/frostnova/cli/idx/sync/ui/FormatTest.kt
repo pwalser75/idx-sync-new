@@ -31,15 +31,18 @@ class FormatTest {
     fun `renders static output without error`() {
         val ui = ConsoleUi(Terminal(ansiLevel = AnsiLevel.NONE))
         ui.logo()
-        ui.heading("Test")
+        ui.usage()
         ui.success("ok")
         ui.warn("careful")
         ui.error("boom")
-        ui.summary(
+        ui.listFoundMarkers(emptyList())
+        ui.listMatchingPairs(emptyList())
+        ui.pendingChanges(created = 2, updated = 1, deleted = 0)
+        ui.report(
             SyncMode.SYNC,
-            SyncResult(created = 2, updated = 1, bytesTransferred = 2048, warnings = listOf("skipped x")),
+            SyncResult(created = 2, updated = 1, deleted = 3, bytesTransferred = 2048, warnings = listOf("skipped x")),
             elapsedSeconds = 1.5,
         )
-        ui.summary(SyncMode.RESTORE, SyncResult(), elapsedSeconds = 0.2)
+        ui.report(SyncMode.RESTORE, SyncResult(), elapsedSeconds = 0.2)
     }
 }

@@ -54,7 +54,7 @@ class FileSynchronizer(private val writer: AtomicFileWriter = AtomicFileWriter()
 
     private fun copy(change: FileChange, listener: SyncListener): SyncResult {
         val source = change.origin
-        val unsafe = unsafeReason(source)
+        val unsafe = unsafeReason(source, change.destination)
         if (unsafe != null) {
             listener.onChangeDone(change, SyncAction.SKIP)
             return SyncResult(skipped = 1, warnings = listOf("skipped ${change.relativePath}: $unsafe"))
@@ -80,14 +80,21 @@ class FileSynchronizer(private val writer: AtomicFileWriter = AtomicFileWriter()
         SyncResult(errors = listOf(describe(change, ex)))
     }
 
-    /** Returns a human-readable reason the [source] is unsafe to copy, or `null` when it is safe. */
-    private fun unsafeReason(source: Path): String? = when {
+    /**
+     * Returns a human-readable reason the [source] is unsafe to copy over [destination], or `null` when it
+     * is safe. A 0-byte source is only refused when the destination already holds real (non-empty) data —
+     * a genuinely empty file is still backed up when the target is absent or itself empty.
+     */
+    private fun unsafeReason(source: Path, destination: Path): String? = when {
         !source.exists() -> "source no longer exists"
         !source.isRegularFile() -> "source is not a regular file"
         !source.isReadable() -> "source is not readable"
-        source.fileSize() == 0L -> "source is 0 bytes (protecting target)"
+        source.fileSize() == 0L && hasContent(destination) -> "source is 0 bytes (protecting non-empty target)"
         else -> null
     }
+
+    private fun hasContent(path: Path): Boolean =
+        path.exists() && path.isRegularFile() && runCatching { path.fileSize() > 0L }.getOrDefault(false)
 
     private fun deleteRecursively(path: Path) {
         if (!path.exists()) return

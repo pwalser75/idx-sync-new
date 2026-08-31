@@ -1,20 +1,16 @@
 package ch.frostnova.cli.idx.sync.ui
 
 import ch.frostnova.cli.idx.sync.core.SyncMode
+import ch.frostnova.cli.idx.sync.core.SyncPair
 import ch.frostnova.cli.idx.sync.core.SyncResult
+import ch.frostnova.cli.idx.sync.scan.DiscoveredMarker
 import ch.frostnova.cli.idx.sync.sync.SyncListener
 import com.github.ajalt.mordant.animation.progress.advance
 import com.github.ajalt.mordant.animation.progress.animateOnThread
 import com.github.ajalt.mordant.animation.progress.execute
 import com.github.ajalt.mordant.rendering.TextAlign
-import com.github.ajalt.mordant.rendering.TextColors.brightBlue
-import com.github.ajalt.mordant.rendering.TextColors.brightCyan
-import com.github.ajalt.mordant.rendering.TextColors.brightGreen
-import com.github.ajalt.mordant.rendering.TextColors.brightWhite
-import com.github.ajalt.mordant.rendering.TextColors.gray
-import com.github.ajalt.mordant.rendering.TextColors.green
-import com.github.ajalt.mordant.rendering.TextColors.red
-import com.github.ajalt.mordant.rendering.TextColors.yellow
+import com.github.ajalt.mordant.rendering.TextColors
+import com.github.ajalt.mordant.rendering.TextStyle
 import com.github.ajalt.mordant.rendering.TextStyles.bold
 import com.github.ajalt.mordant.terminal.Terminal
 import com.github.ajalt.mordant.widgets.Spinner
@@ -27,71 +23,181 @@ import com.github.ajalt.mordant.widgets.progress.text
 import com.github.ajalt.mordant.widgets.progress.timeRemaining
 
 /**
- * The console front-end, built on Mordant. Mordant auto-detects terminal capabilities and downgrades
- * gracefully (colors on a capable terminal, plain text otherwise) on every platform — including Windows,
- * which the original tool could not colorize. Progress bars expand to the full terminal width, and the
- * copy phase shows an **accurate** ETA because the total byte count is known up front (unlike the original,
- * which discovered files on the fly).
+ * The console front-end, built on Mordant. Colours mirror the original tool's 256-colour scheme; Mordant
+ * auto-detects terminal capabilities and degrades gracefully (colours where supported, plain text — incl.
+ * Windows — otherwise). Progress bars use (almost) the full terminal width with a safe margin so they never
+ * wrap, and transient progress is cleared when done, leaving only the results / report.
  */
 class ConsoleUi(val terminal: Terminal = Terminal()) {
 
+    // Pleasant palette, semantically mapped: blue = scan/sync, green = create/success,
+    // yellow = update, orange = delete, red = error, cyan = ids/accents, gray = muted.
+    private val gray = TextColors.rgb("9e9e9e")
+    private val blue = TextColors.rgb("5fafff")
+    private val cyan = TextColors.rgb("5fd7d7")
+    private val green = TextColors.rgb("5fd75f")
+    private val yellow = TextColors.rgb("ffd75f")
+    private val orange = TextColors.rgb("ff875f")
+    private val red = TextColors.rgb("ff5f5f")
+
+    // ---- static output --------------------------------------------------------------------------------
+
     fun logo() {
-        terminal.println()
-        terminal.println((bold + brightBlue)("  ┌─────────────────────┐"))
-        terminal.println((bold + brightBlue)("  │  ") + (bold + brightWhite)("◆ idx-sync") + (gray)("  backup") + (bold + brightBlue)("  │"))
-        terminal.println((bold + brightBlue)("  └─────────────────────┘"))
-        terminal.println()
+        terminal.println(blue("------------"))
+        terminal.println((bold + blue)("$ROCKET Idx SYNC"))
+        terminal.println((bold + blue)("------------"))
     }
 
-    fun heading(text: String) = terminal.println((bold + brightBlue)("▚ $text"))
-    fun info(text: String) = terminal.println("  $text")
-    fun bullet(text: String) = terminal.println((gray)("  • ") + text)
-    fun step(text: String) = terminal.println((brightCyan)("  → ") + text)
-    fun success(text: String) = terminal.println((green)("  ✔ ") + text)
-    fun warn(text: String) = terminal.println((yellow)("  ! ") + text)
-    fun error(text: String) = terminal.println((red)("  ✖ ") + text)
+    /** Usage text, in the original tool's style (command names + their arguments). */
+    fun usage() {
+        line("Usage: ${(bold + cyan)("idx-sync [command] [args]...")}")
+        line("Commands:")
+        cmd("scan", "", "Scan for sync files and show matching pairs")
+        cmd("diff", "", "Scan for sync files, compare matching pairs and report changes")
+        cmd("sync", "", "Synchronize files (mirror each source onto its target)")
+        cmd("source", "[path] [name]", "add the given path as a source with the given name")
+        cmd("target", "[path] [source-folder-id]", "add the given path as a target for the source with the given id")
+        cmd("remove", "[path]", "remove the given path as source or target folder (deletes the .idxsync file)")
+        cmd("restore", "", "reverse sync: restore files from target back to source (never deletes)")
+        cmd("demo", "[duration]", "simulate a run to showcase the UI, e.g. demo 15s")
+    }
+
+    private fun cmd(name: String, args: String, description: String) {
+        val head = (bold + green)(name.padEnd(7))
+        val argText = if (args.isEmpty()) "" else " ${gray(args)}"
+        line("- $head$argText: $description")
+    }
+
+    fun line(text: String) = terminal.println(text)
+    fun info(text: String) = terminal.println(text)
+    fun success(text: String) = terminal.println(green(text))
+    fun warn(text: String) = terminal.println(yellow(text))
+    fun error(text: String) = terminal.println("$ERROR ${red(text)}")
     fun blank() = terminal.println()
 
-    private val width: Int get() = terminal.size.width
-
-    private fun ellipsize(text: String, reserve: Int = 30): String {
-        val max = (width - reserve).coerceAtLeast(12)
-        return if (text.length <= max) text else "…" + text.takeLast(max - 1)
+    /** List the discovered markers, in the original tool's format. */
+    fun listFoundMarkers(markers: List<DiscoveredMarker>) {
+        if (markers.isEmpty()) {
+            line("No .idxsync files found.")
+            return
+        }
+        line("Found following .idxsync files:")
+        markers.sortedWith(compareBy({ it.file.isTarget }, { it.file.folderName ?: "" })).forEach { m ->
+            val id = (bold + cyan)(m.file.folderId ?: "?")
+            if (m.file.isTarget) {
+                line("- $SYNC $id: source = ${cyan(m.file.sourceFolderId ?: "?")} in ${m.dir}")
+            } else {
+                line("- $SYNC $id: ${cyan(m.file.folderName ?: "")}, in ${m.dir}")
+            }
+        }
     }
 
-    /**
-     * Run an indeterminate phase (scanning / comparing — total unknown by nature) with a live spinner that
-     * shows the current item. [block] receives a callback to update the displayed detail.
-     */
+    /** List the resolved sync pairs, in the original tool's format. */
+    fun listMatchingPairs(pairs: List<SyncPair>) {
+        if (pairs.isEmpty()) {
+            line("No matching sync folders found.")
+            return
+        }
+        line("Matching sync folders found:")
+        pairs.forEach { p -> line("- $CHECK ${(bold + green)(p.name)} ${p.source} -> ${p.target}") }
+    }
+
+    /** Detailed per-file change listing (used by `diff`), coloured by action. */
+    fun listChanges(changes: List<ch.frostnova.cli.idx.sync.core.FileChange>) {
+        changes.filter { it.action == ch.frostnova.cli.idx.sync.core.SyncAction.CREATE }
+            .forEach { line(green("+ ${it.relativePath} [${formatBytes(it.size)}]")) }
+        changes.filter { it.action == ch.frostnova.cli.idx.sync.core.SyncAction.UPDATE }
+            .forEach { line(yellow("* ${it.relativePath} [${formatBytes(it.size)}]")) }
+        changes.filter { it.action == ch.frostnova.cli.idx.sync.core.SyncAction.DELETE }
+            .forEach { line(orange("- ${it.relativePath}")) }
+    }
+
+    /** One-line summary of pending changes, in the original tool's phrasing. */
+    fun pendingChanges(created: Int, updated: Int, deleted: Int) {
+        val parts = buildList {
+            if (created > 0) add("${(bold + green)("$created")} files created")
+            if (updated > 0) add("${(bold + yellow)("$updated")} files updated")
+            if (deleted > 0) add("${(bold + orange)("$deleted")} files deleted")
+        }
+        if (parts.isEmpty()) line("No changes since last sync.")
+        else line("Changes since last sync: ${parts.joinToString(", ")}")
+    }
+
+    /** The final report that replaces the (cleared) copy progress bar. */
+    fun report(mode: SyncMode, result: SyncResult, elapsedSeconds: Double) {
+        val title = if (mode == SyncMode.RESTORE) "Restore result" else "Sync result"
+        if (result.isEmpty) {
+            line("$CHECK ${(bold + green)("Done")}, everything already up to date (${formatDuration(elapsedSeconds)}).")
+            return
+        }
+        line("${(bold + blue)(title)}:")
+        if (result.created > 0) line("- ${(bold + green)("${result.created}")} files created")
+        if (result.updated > 0) line("- ${(bold + yellow)("${result.updated}")} files updated")
+        if (result.deleted > 0) line("- ${(bold + orange)("${result.deleted}")} files deleted")
+        if (result.skipped > 0) line("- ${(bold + yellow)("${result.skipped}")} files skipped")
+        if (result.bytesTransferred > 0) line("- ${(bold + yellow)(formatBytes(result.bytesTransferred))} transferred")
+        result.warnings.forEach { warn("  ! $it") }
+        result.errors.forEach { line("  ${red("$ERROR $it")}") }
+        line("- done in ${(bold + cyan)(formatDuration(elapsedSeconds))}")
+    }
+
+    // ---- progress -------------------------------------------------------------------------------------
+
+    /** Indeterminate phase (comparing) with a spinner; cleared when done. */
     fun <T> spinner(title: String, block: (setDetail: (String) -> Unit) -> T): T {
         val layout = progressBarContextLayout<String> {
-            spinner(Spinner.Dots())
+            spinner(Spinner.Dots(style = cyan))
             text(align = TextAlign.LEFT) { context }
         }
-        val anim = layout.animateOnThread(terminal, "$title…", null)
+        val anim = layout.animateOnThread(terminal, title, null)
         val future = anim.execute()
         return try {
-            block { detail -> anim.update { context = (bold)("$title  ") + gray(ellipsize(detail)) } }
+            block { detail -> anim.update { context = "$title  " + gray(ellipsize(detail, 60)) } }
         } finally {
-            anim.update { context = (green)("✔ ") + title }
-            anim.stop()
-            runCatching { future.get() }
+            anim.stop(); runCatching { future.get() }; runCatching { anim.clear() }
+        }
+    }
+
+    /** Determinate phase reporting a 0..1 fraction (scanning); a wide bar, cleared when done. */
+    fun <T> fractionProgress(title: String, block: (report: (Double, Any) -> Unit) -> T): T {
+        val info = 40
+        val barWidth = barWidth(infoWidth = info, tailWidth = 12)
+        val layout = progressBarContextLayout<String> {
+            text(align = TextAlign.LEFT) { context }
+            progressBar(width = barWidth, completeStyle = blue, finishedStyle = blue)
+            percentage()
+        }
+        val anim = layout.animateOnThread(terminal, title, TICKS)
+        val future = anim.execute()
+        return try {
+            block { fraction, detail ->
+                anim.update {
+                    completed = (fraction.coerceIn(0.0, 1.0) * TICKS).toLong()
+                    context = ellipsize("$title  $detail", info)
+                }
+            }
+        } finally {
+            anim.update { completed = TICKS }
+            anim.stop(); runCatching { future.get() }; runCatching { anim.clear() }
         }
     }
 
     /**
-     * Run the copy phase with a full-width, byte-accurate progress bar (bar · % · speed · ETA). Returns a
-     * [SyncListener] to the caller's [run] block so the synchronizer can drive it.
+     * The copy phase: a (near) full-width, byte-accurate progress bar (bar · % · speed · ETA). Cleared when
+     * done so the caller can print the report in its place. Returns the caller's [SyncResult].
      */
     fun copyProgress(totalBytes: Long, run: (SyncListener) -> SyncResult): SyncResult {
+        val info = 26
+        val barWidth = barWidth(infoWidth = info, tailWidth = 34)
         val layout = progressBarContextLayout<String> {
             text(align = TextAlign.LEFT) { context }
-            progressBar()
+            progressBar(width = barWidth, completeStyle = blue, finishedStyle = blue)
             percentage()
             speed("B/s")
             timeRemaining()
         }
-        val anim = layout.animateOnThread(terminal, "starting", totalBytes.coerceAtLeast(1))
+        val total = totalBytes.coerceAtLeast(1)
+        val anim = layout.animateOnThread(terminal, "", total)
         val future = anim.execute()
         val listener = object : SyncListener {
             override fun onChangeStart(
@@ -99,7 +205,7 @@ class ConsoleUi(val terminal: Terminal = Terminal()) {
                 index: Int,
                 total: Int,
             ) {
-                anim.update { context = gray("[${index + 1}/$total] ") + ellipsize(change.relativePath.toString()) }
+                anim.update { context = ellipsize(change.relativePath.toString(), info) }
             }
 
             override fun onBytes(bytesCopied: Long) = anim.advance(bytesCopied)
@@ -107,31 +213,30 @@ class ConsoleUi(val terminal: Terminal = Terminal()) {
         return try {
             run(listener)
         } finally {
-            anim.update { completed = totalBytes.coerceAtLeast(1) }
-            anim.stop()
-            runCatching { future.get() }
+            anim.update { completed = total }
+            anim.stop(); runCatching { future.get() }; runCatching { anim.clear() }
         }
     }
 
-    /** Print the closing summary block. */
-    fun summary(mode: SyncMode, result: SyncResult, elapsedSeconds: Double) {
-        blank()
-        heading(if (mode == SyncMode.RESTORE) "Restore complete" else "Sync complete")
-        if (result.isEmpty) {
-            success("Everything already up to date.")
-        } else {
-            if (result.created > 0) terminal.println((green)("  + ") + "${bold(result.created.toString())} created")
-            if (result.updated > 0) terminal.println((brightBlue)("  * ") + "${bold(result.updated.toString())} updated")
-            if (result.deleted > 0) terminal.println((yellow)("  - ") + "${bold(result.deleted.toString())} deleted")
-            if (result.skipped > 0) terminal.println((yellow)("  ~ ") + "${bold(result.skipped.toString())} skipped")
-            if (result.bytesTransferred > 0) {
-                terminal.println((brightCyan)("  ⇄ ") + "${bold(formatBytes(result.bytesTransferred))} transferred")
-            }
-            result.warnings.forEach { warn(it) }
-            result.errors.forEach { error(it) }
-        }
-        blank()
-        terminal.println(gray("  finished in ${formatDuration(elapsedSeconds)}"))
-        blank()
+    // ---- helpers --------------------------------------------------------------------------------------
+
+    /** Bar width = terminal width minus the info cell, the trailing cells, and a safe margin. */
+    private fun barWidth(infoWidth: Int, tailWidth: Int): Int =
+        (terminal.size.width - infoWidth - tailWidth - SAFE_MARGIN).coerceIn(8, 240)
+
+    private fun ellipsize(text: String, maxLen: Int): String {
+        if (text.length <= maxLen) return text.padEnd(maxLen)
+        return ("…" + text.takeLast(maxLen - 1))
+    }
+
+    private operator fun TextStyle.invoke(value: Any): String = this(value.toString())
+
+    companion object {
+        private const val TICKS = 10_000L
+        private const val SAFE_MARGIN = 2
+        private const val ROCKET = "🚀" // 🚀
+        private const val SYNC = "🔄"   // 🔄
+        private const val CHECK = "✅"        // ✅
+        private const val ERROR = "❌"        // ❌
     }
 }

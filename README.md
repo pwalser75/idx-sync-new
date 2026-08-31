@@ -28,17 +28,21 @@ tests.
 ## Usage
 
 ```bash
-idx-sync                       # scan, compare and synchronize (default)
-idx-sync run                   # same as above
+idx-sync                       # no arguments: print usage
 idx-sync scan                  # find markers and list matching sync pairs
 idx-sync diff                  # show pending changes without applying them
-idx-sync restore               # reverse sync: restore target -> source (never deletes)
+idx-sync sync                  # scan, compare and synchronize (mirror source -> target)
 idx-sync source <path> <name>  # mark a folder as a synchronization source
 idx-sync target <path> <id>    # mark a folder as a target mirroring source <id>
 idx-sync remove <path>         # remove a folder's .idxsync marker
+idx-sync restore               # reverse sync: restore target -> source (never deletes)
 idx-sync demo 15s              # simulate a run for 15s to showcase the UI
-idx-sync --help                # full help
 ```
+
+Scanning is a quick, shallow sweep of the filesystem roots and the current directory (down to a bounded
+depth), with a progress bar that clears when done — it then lists the discovered markers and the matching
+pairs. The copy phase shows a wide, byte-accurate progress bar that is replaced by a summary report
+(created / updated / deleted / elapsed) when it finishes.
 
 ### Marking folders
 

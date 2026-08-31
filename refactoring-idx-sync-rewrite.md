@@ -342,3 +342,39 @@ cli      — Clikt commands: run / scan / diff / source / target / remove / rest
   detection, Windows coloring, redundant subtree deletes, exclude-at-root.
 - Suggested next step: review, then commit `idx-sync-new/` (see plan). Optional future work: content-hash
   comparison mode, parallel copy across independent pairs, config-cache for faster builds.
+
+## Phase 10 — Post-review adjustments (user testing feedback) ✅
+
+After the first release the user tested it and asked for changes to match the original tool's feel:
+
+- [x] **Scanning** now behaves like the original: a quick, shallow, depth-bounded sweep of the filesystem
+      roots **and the current directory**, with a **progress bar** (fraction + current path) that is
+      **cleared** when done.
+- [x] **Scan output** restored to the original: lists the discovered `.idxsync` files (🔄) then the
+      matching folder pairs (✅), same phrasing.
+- [x] **`.idxsync` compatibility**: mapper aligned to the original (NON_EMPTY, MINIMIZE_QUOTES, INDENT,
+      ACCEPT_SINGLE_VALUE_AS_ARRAY, ACCEPT_EMPTY_STRING_AS_NULL_OBJECT, lenient unknown props) — fully
+      interoperable both ways.
+- [x] **No arguments → usage** (was: default sync). Usage rewritten in the original style, listing each
+      command **with its arguments**, reordered: scan, diff, sync, source, target, remove, restore, demo.
+- [x] **`run` command renamed to `sync`.**
+- [x] **Colour scheme** reworked to pleasant, semantic tones: blue = scan/sync, green = create/success,
+      yellow = update, orange = delete, red = error, cyan = ids/accents.
+- [x] **Progress bars widened** to (near) full terminal width via `barWidth = width − info − tail − margin`
+      (safe margin so they never wrap); bars coloured blue.
+- [x] **Copy progress bar cleared** when done and **replaced by a report** (created/updated/deleted +
+      elapsed).
+- [x] **0-byte guard refined**: a 0-byte source is skipped **only when the target exists and is non-empty**;
+      a genuinely empty file is otherwise backed up normally.
+- [x] Scanner **dedups** markers reachable from both `/` and the current directory.
+- [x] **Verify:** `./gradlew build` green (**53 tests**); usage, demo (wide blue bars, cleared, report),
+      and a real `scan` (found system markers, matched pairs, no duplicates) confirmed.
+
+### 2026-08-31 — Phase 10: Post-review adjustments
+- Did: rewrote `ui/ConsoleUi` (semantic palette, original-style logo/usage/listing, wide+cleared progress
+  bars, report); reworked `scan/SyncFolderScanner` (roots = FS roots + cwd, depth-relative, progress
+  fraction, dedup); `cli/SyncApplication` + `DemoRunner` to the original flow; `Main` no-args→usage with
+  custom usage + Clikt error handling; renamed `Run`→`Sync`; aligned the Jackson mapper for `.idxsync`
+  compatibility; refined the 0-byte guard (only skip when target has content).
+- Verify: 53 tests green; manual verification of usage/demo/scan on the real machine.
+- Commit: pending push.

@@ -1,5 +1,6 @@
 package ch.frostnova.cli.idx.sync.config
 
+import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.SerializationFeature
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory
 import com.fasterxml.jackson.dataformat.yaml.YAMLGenerator
@@ -18,13 +19,18 @@ import kotlin.io.path.isRegularFile
  */
 class IdxSyncFileRepository {
 
+    // Configured to match the original Java tool's mapper so `.idxsync` files are fully interoperable.
     private val mapper = YAMLMapper(
         YAMLFactory.builder()
             .enable(YAMLGenerator.Feature.MINIMIZE_QUOTES)
-            .disable(YAMLGenerator.Feature.WRITE_DOC_START_MARKER)
             .build(),
     ).registerKotlinModule()
+        .enable(SerializationFeature.INDENT_OUTPUT)
         .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+        .disable(SerializationFeature.WRITE_SINGLE_ELEM_ARRAYS_UNWRAPPED)
+        .enable(DeserializationFeature.ACCEPT_SINGLE_VALUE_AS_ARRAY)
+        .enable(DeserializationFeature.ACCEPT_EMPTY_STRING_AS_NULL_OBJECT)
+        .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
 
     /** Resolve the marker path within [dir]. */
     fun resolve(dir: Path): Path = dir.resolve(FILENAME)
