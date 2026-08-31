@@ -30,15 +30,15 @@ import com.github.ajalt.mordant.widgets.progress.timeRemaining
  */
 class ConsoleUi(val terminal: Terminal = Terminal()) {
 
-    // Pleasant palette, semantically mapped: blue = scan/sync, green = create/success,
+    // Palette (user-picked), semantically mapped: blue = scan/sync, green = create/success,
     // yellow = update, orange = delete, red = error, cyan = ids/accents, gray = muted.
+    private val blue = TextColors.rgb("9e9e9e")
+    private val green = TextColors.rgb("7ee787")
+    private val yellow = TextColors.rgb("f5c542")
+    private val orange = TextColors.rgb("fb923c")
+    private val red = TextColors.rgb("ef4444")
+    private val cyan = TextColors.rgb("5fafff")
     private val gray = TextColors.rgb("9e9e9e")
-    private val blue = TextColors.rgb("5fafff")
-    private val cyan = TextColors.rgb("5fd7d7")
-    private val green = TextColors.rgb("5fd75f")
-    private val yellow = TextColors.rgb("ffd75f")
-    private val orange = TextColors.rgb("ff875f")
-    private val red = TextColors.rgb("ff5f5f")
 
     // ---- static output --------------------------------------------------------------------------------
 
