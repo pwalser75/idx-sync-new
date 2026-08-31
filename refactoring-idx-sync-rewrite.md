@@ -378,3 +378,44 @@ After the first release the user tested it and asked for changes to match the or
   compatibility; refined the 0-byte guard (only skip when target has content).
 - Verify: 53 tests green; manual verification of usage/demo/scan on the real machine.
 - Commit: pending push.
+
+## Phase 11 — Second round of review feedback ✅
+
+- [x] **Source is strictly read-only during sync** (critical): the synchronizer only ever writes/deletes
+      the *destination*; added a hard **protected-roots guard** that refuses any write/delete landing inside
+      a source folder. Verified by tests (guard + a "source snapshot unchanged after sync" E2E test).
+- [x] **`restore <source-folder-id>`** now requires the id, restores only that folder, **diffs first,
+      lists the differences, and asks `(y/N)`** before writing; still never deletes at the source.
+- [x] **`sync [source-folder-id]`** optional argument syncs only that one folder.
+- [x] **Progress bar full width**: the root cause was `progressBar(width=…)` creating a *fixed*-width bar;
+      switched to `progressBar()` (no width) which maps to `ColumnWidth.Expand` and fills the row.
+- [x] **Faster copying**: removed redundant double-buffering and raised the copy buffer to 1 MiB.
+- [x] Transient progress (scan bar, "comparing …" line, copy bar) is cleared when done and replaced by the
+      listing / report (re-confirmed).
+- [x] **Verify:** `./gradlew build` green (**55 tests**); verified `sync <id>`, `restore <id>` abort/confirm,
+      protected-source guard, wide bar (Expand), and clean cleared output.
+
+### 2026-08-31 — Phase 11: Second review round
+- Did: protected-roots safety guard in `FileSynchronizer` (+ SyncApplication passes source roots for sync,
+  target roots for restore); `restore` requires id + diff + confirm; `sync` optional id; expanding progress
+  bars (fixed→Expand); 1 MiB unbuffered copy; new tests (protected guard, source-unchanged).
+- Decisions: made "source read-only" a *structural* guarantee, not just an emergent property — the guard is
+  belt-and-suspenders against any future diff/sync bug. Confirmed via `javap` that `progressBar()` null width
+  = `ColumnWidth.Expand` (the real width fix).
+- Verify: 55 tests green; manual CLI verification of all new flows.
+- Commit: pending push.
+
+## Phase 12 — Overlapping pair detection ✅
+
+- [x] Detect **overlapping folder pairs** (source is an ancestor of target, or vice versa, or identical) —
+      `SyncPair.overlapping`. Such pairs are **reported** in the scan output ("Overlapping folder pairs
+      (skipped …)") and **excluded** from the matching pairs, so they are never synchronized (or restored).
+- [x] Test for the ancestor/descendant/equal/separate cases; verified on a real overlapping fixture.
+- [x] **Verify:** `./gradlew build` green (**56 tests**).
+
+### 2026-08-31 — Phase 12: Overlapping pair detection
+- Did: `SyncPair.overlapping` (normalized ancestor check); `SyncApplication.scan` partitions pairs and
+  reports overlaps via `ConsoleUi.listOverlappingPairs`; returns only safe pairs so sync/diff/restore skip
+  them. Prevents copying a folder into itself.
+- Verify: 56 tests green; real scan shows the overlap section and omits the pair from the matching list.
+- Commit: pending push.

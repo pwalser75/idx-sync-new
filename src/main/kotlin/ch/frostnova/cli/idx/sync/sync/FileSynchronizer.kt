@@ -37,19 +37,41 @@ interface SyncListener {
  */
 class FileSynchronizer(private val writer: AtomicFileWriter = AtomicFileWriter()) {
 
-    fun sync(changes: List<FileChange>, listener: SyncListener = SyncListener.NONE): SyncResult {
+    /**
+     * Apply [changes]. [protectedRoots] are directories that must be treated as strictly **read-only** —
+     * no file under them may ever be written, deleted or moved (in a normal sync these are the source
+     * roots). Any change whose destination falls within a protected root is refused with an error rather
+     * than executed: a hard safety net for the "never touch the source" guarantee.
+     */
+    fun sync(
+        changes: List<FileChange>,
+        protectedRoots: List<Path> = emptyList(),
+        listener: SyncListener = SyncListener.NONE,
+    ): SyncResult {
+        val protected = protectedRoots.map { it.toAbsolutePath().normalize() }
         var result = SyncResult.EMPTY
         changes.forEachIndexed { index, change ->
             listener.onChangeStart(change, index, changes.size)
-            result += apply(change, listener)
+            result += apply(change, protected, listener)
         }
         return result
     }
 
-    private fun apply(change: FileChange, listener: SyncListener): SyncResult = when (change.action) {
-        SyncAction.CREATE, SyncAction.UPDATE -> copy(change, listener)
-        SyncAction.DELETE -> delete(change, listener)
-        SyncAction.SKIP -> SyncResult(skipped = 1)
+    private fun apply(change: FileChange, protected: List<Path>, listener: SyncListener): SyncResult {
+        if (change.action != SyncAction.SKIP && isProtected(change.destination, protected)) {
+            return SyncResult(errors = listOf("refused: ${change.destination} is within a read-only source"))
+        }
+        return when (change.action) {
+            SyncAction.CREATE, SyncAction.UPDATE -> copy(change, listener)
+            SyncAction.DELETE -> delete(change, listener)
+            SyncAction.SKIP -> SyncResult(skipped = 1)
+        }
+    }
+
+    private fun isProtected(destination: Path, protected: List<Path>): Boolean {
+        if (protected.isEmpty()) return false
+        val dest = destination.toAbsolutePath().normalize()
+        return protected.any { dest.startsWith(it) }
     }
 
     private fun copy(change: FileChange, listener: SyncListener): SyncResult {

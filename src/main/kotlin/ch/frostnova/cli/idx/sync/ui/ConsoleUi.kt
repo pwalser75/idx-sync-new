@@ -54,11 +54,11 @@ class ConsoleUi(val terminal: Terminal = Terminal()) {
         line("Commands:")
         cmd("scan", "", "Scan for sync files and show matching pairs")
         cmd("diff", "", "Scan for sync files, compare matching pairs and report changes")
-        cmd("sync", "", "Synchronize files (mirror each source onto its target)")
+        cmd("sync", "[source-folder-id]", "synchronize all pairs, or only the given source folder")
         cmd("source", "[path] [name]", "add the given path as a source with the given name")
         cmd("target", "[path] [source-folder-id]", "add the given path as a target for the source with the given id")
         cmd("remove", "[path]", "remove the given path as source or target folder (deletes the .idxsync file)")
-        cmd("restore", "", "reverse sync: restore files from target back to source (never deletes)")
+        cmd("restore", "[source-folder-id]", "restore the given source folder from its target (asks first, never deletes)")
         cmd("demo", "[duration]", "simulate a run to showcase the UI, e.g. demo 15s")
     }
 
@@ -100,6 +100,13 @@ class ConsoleUi(val terminal: Terminal = Terminal()) {
         }
         line("Matching sync folders found:")
         pairs.forEach { p -> line("- $CHECK ${(bold + green)(p.name)} ${p.source} -> ${p.target}") }
+    }
+
+    /** Report overlapping pairs (source/target nested) that are skipped. */
+    fun listOverlappingPairs(pairs: List<SyncPair>) {
+        if (pairs.isEmpty()) return
+        line(orange("Overlapping folder pairs (skipped — source and target overlap):"))
+        pairs.forEach { p -> line(orange("- $WARN ${(bold + orange)(p.name)} ${p.source} <-> ${p.target}")) }
     }
 
     /** Detailed per-file change listing (used by `diff`), coloured by action. */
@@ -158,13 +165,13 @@ class ConsoleUi(val terminal: Terminal = Terminal()) {
         }
     }
 
-    /** Determinate phase reporting a 0..1 fraction (scanning); a wide bar, cleared when done. */
+    /** Determinate phase reporting a 0..1 fraction (scanning); a full-width bar, cleared when done. */
     fun <T> fractionProgress(title: String, block: (report: (Double, Any) -> Unit) -> T): T {
         val info = 40
-        val barWidth = barWidth(infoWidth = info, tailWidth = 12)
         val layout = progressBarContextLayout<String> {
             text(align = TextAlign.LEFT) { context }
-            progressBar(width = barWidth, completeStyle = blue, finishedStyle = blue)
+            // No explicit width -> the bar expands to fill the remaining terminal width.
+            progressBar(completeStyle = blue, finishedStyle = blue)
             percentage()
         }
         val anim = layout.animateOnThread(terminal, title, TICKS)
@@ -187,11 +194,11 @@ class ConsoleUi(val terminal: Terminal = Terminal()) {
      * done so the caller can print the report in its place. Returns the caller's [SyncResult].
      */
     fun copyProgress(totalBytes: Long, run: (SyncListener) -> SyncResult): SyncResult {
-        val info = 26
-        val barWidth = barWidth(infoWidth = info, tailWidth = 34)
+        val info = 24
         val layout = progressBarContextLayout<String> {
             text(align = TextAlign.LEFT) { context }
-            progressBar(width = barWidth, completeStyle = blue, finishedStyle = blue)
+            // No explicit width -> the bar expands to fill the remaining terminal width.
+            progressBar(completeStyle = blue, finishedStyle = blue)
             percentage()
             speed("B/s")
             timeRemaining()
@@ -218,11 +225,14 @@ class ConsoleUi(val terminal: Terminal = Terminal()) {
         }
     }
 
-    // ---- helpers --------------------------------------------------------------------------------------
+    /** Ask a yes/no question on the same line; defaults to No (safe) on empty/non-interactive input. */
+    fun confirm(question: String): Boolean {
+        terminal.print(yellow("$question (y/N) "))
+        val answer = runCatching { readlnOrNull() }.getOrNull()?.trim()?.lowercase()
+        return answer == "y" || answer == "yes"
+    }
 
-    /** Bar width = terminal width minus the info cell, the trailing cells, and a safe margin. */
-    private fun barWidth(infoWidth: Int, tailWidth: Int): Int =
-        (terminal.size.width - infoWidth - tailWidth - SAFE_MARGIN).coerceIn(8, 240)
+    // ---- helpers --------------------------------------------------------------------------------------
 
     private fun ellipsize(text: String, maxLen: Int): String {
         if (text.length <= maxLen) return text.padEnd(maxLen)
@@ -233,10 +243,10 @@ class ConsoleUi(val terminal: Terminal = Terminal()) {
 
     companion object {
         private const val TICKS = 10_000L
-        private const val SAFE_MARGIN = 2
         private const val ROCKET = "🚀" // 🚀
         private const val SYNC = "🔄"   // 🔄
         private const val CHECK = "✅"        // ✅
         private const val ERROR = "❌"        // ❌
+        private const val WARN = "⚠"          // ⚠
     }
 }

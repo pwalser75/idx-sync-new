@@ -51,7 +51,20 @@ data class SyncPair(
     val target: Path,
     val excludePatterns: Set<String> = emptySet(),
     val includeHidden: Boolean = false,
-)
+    /** The source folder's `folder-id` (used to target a single pair from the CLI). */
+    val sourceId: String? = null,
+) {
+    /**
+     * True when source and target overlap — identical, or one is an ancestor of the other. Such a pair is
+     * unsafe to synchronize (a folder would be copied into itself), so it is reported and skipped.
+     */
+    val overlapping: Boolean
+        get() {
+            val s = source.toAbsolutePath().normalize()
+            val t = target.toAbsolutePath().normalize()
+            return s == t || s.startsWith(t) || t.startsWith(s)
+        }
+}
 
 /** Aggregated outcome of applying a set of [FileChange]s. Combine partial results with [plus]. */
 data class SyncResult(

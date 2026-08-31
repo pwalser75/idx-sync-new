@@ -81,6 +81,18 @@ class SyncScanTest {
     }
 
     @Test
+    fun `detects overlapping pairs (source ancestor of target or vice versa)`(@TempDir root: Path) {
+        val outer = dir(root, "outer")
+        val inner = dir(root, "outer/inner")
+        val separate = dir(root, "separate")
+
+        assertThat(ch.frostnova.cli.idx.sync.core.SyncPair("a", outer, inner).overlapping).isTrue()
+        assertThat(ch.frostnova.cli.idx.sync.core.SyncPair("b", inner, outer).overlapping).isTrue()
+        assertThat(ch.frostnova.cli.idx.sync.core.SyncPair("c", outer, outer).overlapping).isTrue()
+        assertThat(ch.frostnova.cli.idx.sync.core.SyncPair("d", outer, separate).overlapping).isFalse()
+    }
+
+    @Test
     fun `ignores malformed markers`(@TempDir root: Path) {
         val d = dir(root, "broken")
         repository.resolve(d).writeText("not: [valid")

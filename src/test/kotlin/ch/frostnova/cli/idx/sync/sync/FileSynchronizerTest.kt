@@ -99,6 +99,24 @@ class FileSynchronizerTest {
     }
 
     @Test
+    fun `refuses to write or delete within a protected read-only root`(@TempDir dir: Path) {
+        val source = dir.resolve("src").apply { createDirectories() }
+        val sourceFile = source.resolve("keep.txt").apply { writeText("PRECIOUS SOURCE DATA") }
+        val someSource = dir.resolve("payload.txt").apply { writeText("data") }
+
+        // a (buggy) change that would write/delete inside the protected source must be refused
+        val badWrite = FileChange(sourceFile.fileName, someSource, sourceFile, SyncAction.UPDATE, 4)
+        val badDelete = FileChange(sourceFile.fileName, someSource, sourceFile, SyncAction.DELETE)
+
+        val result = synchronizer.sync(listOf(badWrite, badDelete), protectedRoots = listOf(source))
+
+        assertThat(sourceFile.readText()).isEqualTo("PRECIOUS SOURCE DATA") // untouched
+        assertThat(result.errors).hasSize(2)
+        assertThat(result.errors).allMatch { it.contains("read-only source") }
+        assertThat(result.created + result.updated + result.deleted).isEqualTo(0)
+    }
+
+    @Test
     fun `notifies the listener of progress`(@TempDir dir: Path) {
         val source = dir.resolve("s.txt").apply { writeText("1234567890") }
         val dest = dir.resolve("d.txt")
@@ -111,7 +129,7 @@ class FileSynchronizerTest {
             override fun onChangeDone(change: FileChange, action: SyncAction) { done++ }
         }
 
-        synchronizer.sync(listOf(change(SyncAction.CREATE, source, dest)), listener)
+        synchronizer.sync(listOf(change(SyncAction.CREATE, source, dest)), listener = listener)
 
         assertThat(started).isEqualTo(1)
         assertThat(done).isEqualTo(1)

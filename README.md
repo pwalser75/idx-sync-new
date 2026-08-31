@@ -31,13 +31,18 @@ tests.
 idx-sync                       # no arguments: print usage
 idx-sync scan                  # find markers and list matching sync pairs
 idx-sync diff                  # show pending changes without applying them
-idx-sync sync                  # scan, compare and synchronize (mirror source -> target)
+idx-sync sync [source-id]      # synchronize all pairs, or only the given source folder
 idx-sync source <path> <name>  # mark a folder as a synchronization source
 idx-sync target <path> <id>    # mark a folder as a target mirroring source <id>
 idx-sync remove <path>         # remove a folder's .idxsync marker
-idx-sync restore               # reverse sync: restore target -> source (never deletes)
+idx-sync restore <source-id>   # restore one source folder from its target (asks first, never deletes)
 idx-sync demo 15s              # simulate a run for 15s to showcase the UI
 ```
+
+**The source is treated as strictly read-only during a sync** — files there are never written, moved or
+deleted (only read). A hard safety net refuses any write/delete that would land inside a source folder.
+`restore` is the only mode that writes to a source, and even then it only creates/updates — it never
+deletes. It requires a source-folder-id, shows the differences, and asks for confirmation before writing.
 
 Scanning is a quick, shallow sweep of the filesystem roots and the current directory (down to a bounded
 depth), with a progress bar that clears when done — it then lists the discovered markers and the matching

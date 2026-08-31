@@ -31,9 +31,13 @@ class SyncApplication(
         }
         ui.listFoundMarkers(markers)
         ui.blank()
-        val pairs = resolver.resolve(markers)
+        val (overlapping, pairs) = resolver.resolve(markers).partition { it.overlapping }
         ui.listMatchingPairs(pairs)
-        return pairs
+        if (overlapping.isNotEmpty()) {
+            ui.blank()
+            ui.listOverlappingPairs(overlapping)
+        }
+        return pairs // overlapping pairs are reported but never synchronized
     }
 
     /** Scan + compare and print the pending changes without applying them. */
@@ -50,11 +54,13 @@ class SyncApplication(
         return changes
     }
 
-    /** Full pipeline: scan, compare, then apply, with the copy bar replaced by a report. */
-    fun run(mode: SyncMode = SyncMode.SYNC) {
+    /**
+     * Full sync: scan, compare, then apply, with the copy bar replaced by a report. When [sourceId] is
+     * given, only the pair with that source folder-id is synchronized.
+     */
+    fun run(mode: SyncMode = SyncMode.SYNC, sourceId: String? = null) {
         val startNs = System.nanoTime()
-        val pairs = scan()
-        if (pairs.isEmpty()) return
+        val pairs = selectPairs(scan(), sourceId) ?: return
         ui.blank()
 
         val changes = compareAll(pairs, mode)
@@ -65,13 +71,57 @@ class SyncApplication(
         }
         ui.blank()
 
-        val totalBytes = changes
-            .filter { it.action == SyncAction.CREATE || it.action == SyncAction.UPDATE }
-            .sumOf { it.size }
-
-        val result = ui.copyProgress(totalBytes) { listener -> synchronizer.sync(changes, listener) }
+        // In a normal sync the source roots are strictly read-only.
+        val protected = pairs.map { it.source }
+        val result = ui.copyProgress(totalBytes(changes)) { listener -> synchronizer.sync(changes, protected, listener) }
         ui.report(mode, result, elapsedSeconds(startNs))
     }
+
+    /**
+     * Restore a single source folder from its target (reverse sync, never deletes). Requires the source
+     * folder-id, shows the differences first, and asks the user to confirm before writing anything.
+     */
+    fun restore(sourceId: String) {
+        val startNs = System.nanoTime()
+        val pairs = selectPairs(scan(), sourceId) ?: return
+        ui.blank()
+
+        val changes = compareAll(pairs, SyncMode.RESTORE)
+        if (changes.isEmpty()) {
+            ui.report(SyncMode.RESTORE, SyncResult.EMPTY, elapsedSeconds(startNs))
+            return
+        }
+        ui.line("The following files would be restored at the source:")
+        ui.blank()
+        ui.listChanges(changes)
+        ui.blank()
+        if (!ui.confirm("Restore ${changes.size} file(s)?")) {
+            ui.warn("Aborted — nothing was restored.")
+            return
+        }
+        ui.blank()
+        // Restore writes the source; the target is the read-only side here.
+        val protected = pairs.map { it.target }
+        val result = ui.copyProgress(totalBytes(changes)) { listener -> synchronizer.sync(changes, protected, listener) }
+        ui.report(SyncMode.RESTORE, result, elapsedSeconds(startNs))
+    }
+
+    /** Narrow [pairs] to a single source folder-id, or return all. `null` = nothing to do (already reported). */
+    private fun selectPairs(pairs: List<SyncPair>, sourceId: String?): List<SyncPair>? {
+        if (pairs.isEmpty()) return null
+        if (sourceId == null) return pairs
+        val selected = pairs.filter { it.sourceId == sourceId }
+        if (selected.isEmpty()) {
+            ui.blank()
+            ui.warn("No matching sync pair for source folder-id '$sourceId'.")
+            return null
+        }
+        return selected
+    }
+
+    private fun totalBytes(changes: List<FileChange>): Long = changes
+        .filter { it.action == SyncAction.CREATE || it.action == SyncAction.UPDATE }
+        .sumOf { it.size }
 
     private fun compareAll(pairs: List<SyncPair>, mode: SyncMode): List<FileChange> =
         pairs.flatMap { pair ->

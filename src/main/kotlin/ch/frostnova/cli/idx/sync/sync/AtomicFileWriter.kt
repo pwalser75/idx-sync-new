@@ -25,7 +25,7 @@ import kotlin.io.path.readAttributes
  * never a partial file. If step 3 fails after the target was moved aside, the backup is restored. Temp and
  * backup files are named so [ch.frostnova.cli.idx.sync.filter.PlatformExcludes] always ignores them.
  */
-class AtomicFileWriter(private val bufferSize: Int = 1 shl 16) {
+class AtomicFileWriter(private val bufferSize: Int = 1 shl 20) {
 
     /**
      * Replace [destination] with the contents of [source], preserving the source's last-modified time.
@@ -34,7 +34,8 @@ class AtomicFileWriter(private val bufferSize: Int = 1 shl 16) {
      */
     fun write(source: Path, destination: Path, onBytes: (Long) -> Unit = {}) {
         val lastModified = source.readAttributes<BasicFileAttributes>().lastModifiedTime()
-        Files.newInputStream(source).buffered(bufferSize).use { input ->
+        // Unbuffered stream + a large copy buffer: no redundant double-buffering, fewer syscalls.
+        Files.newInputStream(source).use { input ->
             write(input, destination, lastModified, onBytes)
         }
     }
@@ -54,7 +55,7 @@ class AtomicFileWriter(private val bufferSize: Int = 1 shl 16) {
         try {
             // 1. stream into the temp file (an abort here never touches the target)
             temp.deleteIfExists()
-            Files.newOutputStream(temp).buffered(bufferSize).use { output ->
+            Files.newOutputStream(temp).use { output ->
                 val buffer = ByteArray(bufferSize)
                 while (true) {
                     val read = input.read(buffer)

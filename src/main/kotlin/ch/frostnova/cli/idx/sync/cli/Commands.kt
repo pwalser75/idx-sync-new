@@ -8,6 +8,7 @@ import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.Context
 import com.github.ajalt.clikt.parameters.arguments.argument
 import com.github.ajalt.clikt.parameters.arguments.default
+import com.github.ajalt.clikt.parameters.arguments.optional
 import com.github.ajalt.clikt.parameters.types.path
 import java.nio.file.Path
 import java.util.UUID
@@ -24,13 +25,15 @@ class IdxSync(private val ui: ConsoleUi) : CliktCommand() {
 }
 
 class Sync(private val app: SyncApplication) : CliktCommand() {
-    override fun help(context: Context) = "Scan, compare and synchronize all matching folder pairs"
-    override fun run() = app.run(SyncMode.SYNC)
+    override fun help(context: Context) = "Synchronize all matching folder pairs, or only the given source folder"
+    private val sourceId by argument(name = "source-folder-id", help = "only synchronize this source folder").optional()
+    override fun run() = app.run(SyncMode.SYNC, sourceId)
 }
 
 class Restore(private val app: SyncApplication) : CliktCommand() {
-    override fun help(context: Context) = "Reverse sync: restore files from target back to source (never deletes)"
-    override fun run() = app.run(SyncMode.RESTORE)
+    override fun help(context: Context) = "Reverse sync: restore the given source folder from its target (never deletes)"
+    private val sourceId by argument(name = "source-folder-id", help = "the source folder to restore")
+    override fun run() = app.restore(sourceId)
 }
 
 class Scan(private val app: SyncApplication) : CliktCommand() {

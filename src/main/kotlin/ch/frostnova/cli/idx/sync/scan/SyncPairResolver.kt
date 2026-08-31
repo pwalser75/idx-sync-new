@@ -24,6 +24,7 @@ class SyncPairResolver {
                     target = target.dir,
                     excludePatterns = source.file.excludePatterns + target.file.excludePatterns,
                     includeHidden = source.file.includeHidden,
+                    sourceId = source.file.folderId,
                 )
             }
             .sortedBy { it.name.lowercase() }

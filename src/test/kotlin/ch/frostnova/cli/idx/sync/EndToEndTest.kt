@@ -14,6 +14,7 @@ import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
 import kotlin.io.path.createDirectories
 import kotlin.io.path.exists
+import kotlin.io.path.isRegularFile
 import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.readText
 import kotlin.io.path.walk
@@ -31,7 +32,8 @@ class EndToEndTest {
         val markers = SyncFolderScanner(repo).scan(listOf(root))
         val pairs = SyncPairResolver().resolve(markers)
         val changes = pairs.flatMap { DiffEngine().diff(it, mode) }
-        return FileSynchronizer().sync(changes)
+        val protected = if (mode == SyncMode.SYNC) pairs.map { it.source } else pairs.map { it.target }
+        return FileSynchronizer().sync(changes, protectedRoots = protected)
     }
 
     private fun file(base: Path, rel: String, content: String): Path {
@@ -72,6 +74,27 @@ class EndToEndTest {
         val litter = target.walk().filter { it.fileName.toString().let { n -> n.endsWith(".idxtmp") || n.endsWith(".idxbak") } }.toList()
         assertThat(litter).isEmpty()
     }
+
+    @Test
+    fun `the source is never modified during a sync`(@TempDir root: Path) {
+        val (source, target) = setup(root)
+        file(source, "a.txt", "one")
+        file(source, "dir/b.txt", "two")
+        file(target, "a.txt", "stale")              // will be updated in target
+        file(target, "extra.txt", "obsolete")       // would be deleted — in target only
+        file(target, "extra-dir/c.txt", "obsolete") // whole subtree deleted — in target only
+
+        val before = snapshot(source)
+        fullSync(root)
+        val after = snapshot(source)
+
+        assertThat(after).isEqualTo(before) // identical: no file added, removed, or changed in the source
+    }
+
+    /** Map of every regular file under [dir] (relative path -> content), excluding the .idxsync marker. */
+    private fun snapshot(dir: Path): Map<String, String> =
+        dir.walk().filter { it.isRegularFile() && it.fileName.toString() != ".idxsync" }
+            .associate { dir.relativize(it).toString() to it.readText() }
 
     @Test
     fun `a 0-byte source never destroys an existing good target`(@TempDir root: Path) {
