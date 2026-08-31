@@ -124,9 +124,11 @@ class SyncApplication(
         .sumOf { it.size }
 
     private fun compareAll(pairs: List<SyncPair>, mode: SyncMode): List<FileChange> =
-        pairs.flatMap { pair ->
-            ui.spinner("Comparing ${pair.name}") { detail ->
-                diffEngine.diff(pair, mode) { path -> detail(path.toString()) }
+        // One in-place progress line for the whole compare phase, cleared when done — leaving only the
+        // "Changes since last sync" summary.
+        ui.spinner("Comparing") { detail ->
+            pairs.flatMap { pair ->
+                diffEngine.diff(pair, mode) { path -> detail("${pair.name}: $path") }
             }
         }
 
