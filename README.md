@@ -33,13 +33,19 @@ tests.
 idx-sync                       # no arguments: print usage
 idx-sync scan                  # find markers and list matching sync pairs
 idx-sync diff                  # show pending changes without applying them
-idx-sync sync [source-id]      # synchronize all pairs, or only the given source folder
+idx-sync sync [source]         # synchronize all pairs, or only the source matching <source> (folder-id, name or path)
+idx-sync sync <source> --verify # ...and hash-check every copied file against the source before replacing the target
 idx-sync source <path> <name>  # mark a folder as a synchronization source
 idx-sync target <path> <id>    # mark a folder as a target mirroring source <id>
+idx-sync pair <source> <target> # set up a source and a target mirroring it, in one step
 idx-sync remove <path>         # remove a folder's .idxsync marker
-idx-sync restore <source-id>   # restore one source folder from its target (asks first, never deletes)
+idx-sync restore <source> [sub-path]  # restore a source folder (by id, name or path) from its target — optionally only under <sub-path>
+idx-sync version               # print the version (also: --version)
 idx-sync demo 15s              # simulate a run for 15s to showcase the UI
 ```
+
+Global option `--ascii` (or the `NO_UNICODE` env var) switches to plain-ASCII icons and progress bars for
+legacy terminals. `sync`/`restore` exit non-zero when a run fails, so they compose in scripts.
 
 **The source is treated as strictly read-only during a sync** — files there are never written, moved or
 deleted (only read). A hard safety net refuses any write/delete that would land inside a source folder.
@@ -77,6 +83,11 @@ source-folder-id: 4ec2840b-e80b-4498-a2cd-820f283ba2e0
 
 The marker format is backward-compatible with the original tool.
 
+`pair <source> <target>` does both sides in one step: it sets up the source folder as a source (reusing it
+if it already is one, keeping its existing folder-id) and creates or updates the target folder's marker to
+mirror that source. A newly-created source gets its folder name from the directory name and the default
+excludes; an existing source is left untouched.
+
 ### Exclude patterns
 
 - A **slash-less** pattern (`node_modules`, `*.tmp`) matches that name at **any depth**, including the
@@ -105,7 +116,8 @@ To add or change one, edit `platform-excludes.yaml` — no code change needed.
 For each file relative to the pair's roots:
 
 - present in source only → **create**
-- present in both but size differs, or last-modified differs by more than 1s → **update**
+- present in both but size differs, or last-modified differs by more than 2s → **update**
+  (2s tolerates FAT/exFAT's 2-second mtime resolution, common on the USB media this tool targets)
 - present in target only → **delete** (mirror; never in restore mode)
 
 Copies preserve the source's last-modified time.
