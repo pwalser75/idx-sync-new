@@ -51,6 +51,16 @@ class AtomicFileWriterTest {
     }
 
     @Test
+    fun `verifying writer produces a correct copy`(@TempDir dir: Path) {
+        val source = dir.resolve("s.txt").apply { writeText("verified content, byte-for-byte") }
+        val dest = dir.resolve("out/d.txt")
+
+        AtomicFileWriter(verify = true).write(source, dest)
+
+        assertThat(dest.readText()).isEqualTo("verified content, byte-for-byte")
+    }
+
+    @Test
     fun `abort mid-write leaves the original target intact and no temp files behind`(@TempDir dir: Path) {
         val dest = dir.resolve("important.txt").apply { writeText("PRECIOUS ORIGINAL") }
 

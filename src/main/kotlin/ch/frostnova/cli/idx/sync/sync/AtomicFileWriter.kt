@@ -1,5 +1,7 @@
 package ch.frostnova.cli.idx.sync.sync
 
+import java.io.FileOutputStream
+import java.io.IOException
 import java.io.InputStream
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
@@ -8,6 +10,7 @@ import java.nio.file.StandardCopyOption.ATOMIC_MOVE
 import java.nio.file.StandardCopyOption.REPLACE_EXISTING
 import java.nio.file.attribute.BasicFileAttributes
 import java.nio.file.attribute.FileTime
+import java.security.MessageDigest
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.name
 import kotlin.io.path.readAttributes
@@ -25,7 +28,11 @@ import kotlin.io.path.readAttributes
  * never a partial file. If step 3 fails after the target was moved aside, the backup is restored. Temp and
  * backup files are named so [ch.frostnova.cli.idx.sync.filter.PlatformExcludes] always ignores them.
  */
-class AtomicFileWriter(private val bufferSize: Int = 1 shl 20) {
+class AtomicFileWriter(
+    private val bufferSize: Int = 1 shl 20,
+    /** When true, the bytes written to disk are hashed and compared against the source before the rename. */
+    private val verify: Boolean = false,
+) {
 
     /**
      * Replace [destination] with the contents of [source], preserving the source's last-modified time.
@@ -55,17 +62,27 @@ class AtomicFileWriter(private val bufferSize: Int = 1 shl 20) {
         try {
             // 1. stream into the temp file (an abort here never touches the target)
             temp.deleteIfExists()
-            Files.newOutputStream(temp).use { output ->
+            val digest = if (verify) MessageDigest.getInstance("SHA-256") else null
+            FileOutputStream(temp.toFile()).use { output ->
                 val buffer = ByteArray(bufferSize)
                 while (true) {
                     val read = input.read(buffer)
                     if (read < 0) break
                     output.write(buffer, 0, read)
-                    if (read > 0) onBytes(read.toLong())
+                    if (read > 0) {
+                        digest?.update(buffer, 0, read)
+                        onBytes(read.toLong())
+                    }
                 }
                 output.flush()
+                // force the bytes to the physical disk before we rely on the rename — a power loss after the
+                // rename must never surface a target that exists but was never fully persisted.
+                output.fd.sync()
             }
             Files.setLastModifiedTime(temp, lastModified)
+
+            // 1b. optional integrity check: the file now on disk must match the bytes we streamed
+            if (digest != null) verifyMatches(temp, digest.digest())
 
             // 2. move any existing target aside
             val hadTarget = Files.exists(destination)
@@ -83,6 +100,22 @@ class AtomicFileWriter(private val bufferSize: Int = 1 shl 20) {
             if (hadTarget) backup.deleteIfExists()
         } finally {
             runCatching { temp.deleteIfExists() }
+        }
+    }
+
+    /** Re-read [temp] and confirm its content hashes to [expected]; throws if the written copy differs. */
+    private fun verifyMatches(temp: Path, expected: ByteArray) {
+        val actual = MessageDigest.getInstance("SHA-256")
+        Files.newInputStream(temp).use { input ->
+            val buffer = ByteArray(bufferSize)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                if (read > 0) actual.update(buffer, 0, read)
+            }
+        }
+        if (!MessageDigest.isEqual(expected, actual.digest())) {
+            throw IOException("verification failed: the written copy of ${temp.name} does not match the source")
         }
     }
 
