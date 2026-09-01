@@ -22,11 +22,12 @@ import kotlin.io.path.readAttributes
  * so restore only ever brings files *back*.
  *
  * Two files are considered different when their sizes differ or their last-modified times differ by more
- * than [updateThreshold] (filesystems and copies rarely preserve sub-second precision).
+ * than [updateThreshold]. The default is 2s: FAT/exFAT (common on the USB sticks this tool targets) store
+ * mtimes at 2-second resolution, so a tighter threshold would flag every file as changed on each run.
  */
 class DiffEngine(
     private val walker: FileTreeWalker = FileTreeWalker(),
-    private val updateThreshold: Duration = Duration.ofSeconds(1),
+    private val updateThreshold: Duration = Duration.ofSeconds(2),
 ) {
 
     fun diff(pair: SyncPair, mode: SyncMode = SyncMode.SYNC, onProgress: (Path) -> Unit = {}): List<FileChange> {
