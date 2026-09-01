@@ -3,11 +3,16 @@ package ch.frostnova.cli.idx.sync.sync
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
+import java.nio.channels.FileChannel
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption.ATOMIC_MOVE
 import java.nio.file.StandardCopyOption.REPLACE_EXISTING
+import java.nio.file.StandardOpenOption.CREATE
+import java.nio.file.StandardOpenOption.READ
+import java.nio.file.StandardOpenOption.TRUNCATE_EXISTING
+import java.nio.file.StandardOpenOption.WRITE
 import java.nio.file.attribute.BasicFileAttributes
 import java.nio.file.attribute.FileTime
 import java.security.MessageDigest
@@ -38,32 +43,39 @@ class AtomicFileWriter(
      * Replace [destination] with the contents of [source], preserving the source's last-modified time.
      * [onBytes] receives incremental byte counts as the copy progresses. Throws on I/O failure (leaving
      * the original [destination] intact).
+     *
+     * When not verifying, the bytes are moved with [FileChannel.transferTo] — a kernel-side copy (e.g.
+     * `copy_file_range`/`sendfile` on Linux) that avoids pulling every byte through a userspace buffer,
+     * so it is typically faster and does fewer syscalls than a read/write loop. Verify mode still streams
+     * through userspace, because the integrity hash needs to see the bytes.
      */
     fun write(source: Path, destination: Path, onBytes: (Long) -> Unit = {}) {
         val lastModified = source.readAttributes<BasicFileAttributes>().lastModifiedTime()
-        // Unbuffered stream + a large copy buffer: no redundant double-buffering, fewer syscalls.
-        Files.newInputStream(source).use { input ->
-            write(input, destination, lastModified, onBytes)
+        if (verify) {
+            // Unbuffered stream + a large copy buffer: no redundant double-buffering, fewer syscalls.
+            Files.newInputStream(source).use { input -> write(input, destination, lastModified, onBytes) }
+            return
+        }
+        writeAtomically(destination, lastModified) { temp ->
+            FileChannel.open(source, READ).use { src ->
+                FileChannel.open(temp, CREATE, WRITE, TRUNCATE_EXISTING).use { dst ->
+                    transfer(src, dst, onBytes)
+                    // force content + metadata to the physical disk before we rely on the rename — a power
+                    // loss after the rename must never surface a target that was never fully persisted.
+                    dst.force(true)
+                }
+            }
         }
     }
 
     /**
-     * Stream-based seam (also the real implementation of the [Path] overload): copy [input] into
-     * [destination] using the crash-safe temp→backup→rename scheme, stamping [lastModified] on the result.
-     * If [input] fails partway, the original [destination] is untouched and no temp files remain.
+     * Stream-based seam (used for verify mode and by tests): copy [input] into [destination] using the
+     * crash-safe temp→backup→rename scheme, stamping [lastModified] on the result. If [input] fails
+     * partway, the original [destination] is untouched and no temp files remain.
      */
-    @SuppressWarnings("kotlin:S3776")
     internal fun write(input: InputStream, destination: Path, lastModified: FileTime, onBytes: (Long) -> Unit = {}) {
-        val dir = destination.parent
-        if (dir != null) Files.createDirectories(dir)
-
-        val temp = sibling(destination, TEMP_SUFFIX)
-        val backup = sibling(destination, BACKUP_SUFFIX)
-
-        try {
-            // 1. stream into the temp file (an abort here never touches the target)
-            temp.deleteIfExists()
-            val digest = if (verify) MessageDigest.getInstance("SHA-256") else null
+        val digest = if (verify) MessageDigest.getInstance("SHA-256") else null
+        writeAtomically(destination, lastModified) { temp ->
             FileOutputStream(temp.toFile()).use { output ->
                 val buffer = ByteArray(bufferSize)
                 while (true) {
@@ -76,14 +88,32 @@ class AtomicFileWriter(
                     }
                 }
                 output.flush()
-                // force the bytes to the physical disk before we rely on the rename — a power loss after the
-                // rename must never surface a target that exists but was never fully persisted.
                 output.fd.sync()
             }
-            Files.setLastModifiedTime(temp, lastModified)
-
-            // 1b. optional integrity check: the file now on disk must match the bytes we streamed
+            // optional integrity check: the file now on disk must match the bytes we streamed
             if (digest != null) verifyMatches(temp, digest.digest())
+        }
+    }
+
+    /**
+     * The crash-safe orchestration shared by both copy paths: [fill] writes (and fsyncs) the file content
+     * into a hidden temp sibling, then the temp is stamped with [lastModified] and atomically swapped into
+     * place (old → backup → replace → drop backup). A crash between any two steps leaves either the original
+     * [destination] or the fully-written replacement — never a partial file. On any failure the original is
+     * restored and no temp/backup files are left behind.
+     */
+    private fun writeAtomically(destination: Path, lastModified: FileTime, fill: (Path) -> Unit) {
+        val dir = destination.parent
+        if (dir != null) Files.createDirectories(dir)
+
+        val temp = sibling(destination, TEMP_SUFFIX)
+        val backup = sibling(destination, BACKUP_SUFFIX)
+
+        try {
+            // 1. write the content into the temp file (an abort here never touches the target)
+            temp.deleteIfExists()
+            fill(temp)
+            Files.setLastModifiedTime(temp, lastModified)
 
             // 2. move any existing target aside
             val hadTarget = Files.exists(destination)
@@ -101,6 +131,22 @@ class AtomicFileWriter(
             if (hadTarget) backup.deleteIfExists()
         } finally {
             runCatching { temp.deleteIfExists() }
+        }
+    }
+
+    /**
+     * Move all of [src] into [dst] via kernel-side [FileChannel.transferTo], looping because a single call
+     * may move only part of the file (and platforms such as Windows cap the per-call size). [onBytes]
+     * receives each transferred chunk for progress reporting.
+     */
+    private fun transfer(src: FileChannel, dst: FileChannel, onBytes: (Long) -> Unit) {
+        val size = src.size()
+        var position = 0L
+        while (position < size) {
+            val transferred = src.transferTo(position, size - position, dst)
+            if (transferred <= 0L) break // past EOF (e.g. source truncated concurrently) — copy what exists
+            position += transferred
+            onBytes(transferred)
         }
     }
 

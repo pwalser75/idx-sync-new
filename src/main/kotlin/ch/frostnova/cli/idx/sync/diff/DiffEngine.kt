@@ -10,9 +10,6 @@ import ch.frostnova.cli.idx.sync.scan.Visit
 import java.nio.file.Path
 import java.nio.file.attribute.BasicFileAttributes
 import java.time.Duration
-import kotlin.io.path.isDirectory
-import kotlin.io.path.isRegularFile
-import kotlin.io.path.readAttributes
 
 /**
  * Computes the [FileChange]s needed to bring a destination in line with an origin, for a [SyncPair].
@@ -37,8 +34,27 @@ class DiffEngine(
             SyncMode.RESTORE -> pair.target to pair.source
         }
 
-        val origin = enumerate(originRoot, filter, onProgress)
-        val dest = enumerate(destRoot, filter, onProgress)
+        // Source and target live on independent devices by design (e.g. a USB stick and a disk), so the
+        // two enumerations overlap instead of running back-to-back. Only the final in-memory diff needs
+        // both trees, and the walk is the expensive, I/O-bound part. The shared progress callback is
+        // serialised so the two walkers never write the UI line concurrently.
+        val progressLock = Any()
+        val safeProgress: (Path) -> Unit = { path -> synchronized(progressLock) { onProgress(path) } }
+
+        var destTree: Tree? = null
+        var destFailure: Throwable? = null
+        val destWalk = Thread({
+            try {
+                destTree = enumerate(destRoot, filter, safeProgress)
+            } catch (t: Throwable) {
+                destFailure = t
+            }
+        }, "idx-diff-dest").apply { start() }
+
+        val origin = enumerate(originRoot, filter, safeProgress)
+        destWalk.join()
+        destFailure?.let { throw it }
+        val dest = destTree!!
 
         val changes = mutableListOf<FileChange>()
 
@@ -80,22 +96,21 @@ class DiffEngine(
         val attributes = HashMap<Path, BasicFileAttributes>()
         val dirs = HashSet<Path>()
 
-        walker.walk(root) { path ->
+        walker.walk(root) { path, attrs ->
             if (path == root) return@walk Visit.CONTINUE
             val rel = root.relativize(path)
             if (filter.excludes(rel)) {
-                return@walk if (path.isDirectory()) Visit.SKIP_SUBTREE else Visit.CONTINUE
+                return@walk if (attrs.isDirectory) Visit.SKIP_SUBTREE else Visit.CONTINUE
             }
             onProgress(path)
             when {
-                path.isDirectory() -> dirs.add(rel)
-                path.isRegularFile() -> {
-                    val attrs = runCatching { path.readAttributes<BasicFileAttributes>() }.getOrNull()
-                    if (attrs != null) {
-                        files[rel] = path
-                        attributes[rel] = attrs
-                    } // unreadable → treat as absent
+                attrs.isDirectory -> dirs.add(rel)
+                attrs.isRegularFile -> {
+                    // Attributes were read once by the walker (NOFOLLOW_LINKS) — no extra stat here.
+                    files[rel] = path
+                    attributes[rel] = attrs
                 }
+                // symlinks and other non-regular entries are treated as absent (symlink-safe)
             }
             Visit.CONTINUE
         }
