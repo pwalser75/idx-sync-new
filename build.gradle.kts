@@ -20,6 +20,10 @@ dependencies {
     implementation("com.github.ajalt.clikt:clikt:5.0.2")
     implementation("com.github.ajalt.mordant:mordant:3.0.1")
 
+    // JNA (already pulled in transitively by Mordant's Windows backend) — used directly to switch the
+    // Windows console output code page to UTF-8 so Unicode glyphs render instead of showing as '?'.
+    implementation("net.java.dev.jna:jna:5.14.0")
+
     // .idxsync config in YAML (Jackson + Kotlin module)
     implementation("com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:$jacksonVersion")
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin:$jacksonVersion")
