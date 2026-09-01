@@ -5,10 +5,9 @@ import ch.frostnova.cli.idx.sync.config.IdxSyncFileRepository
 import ch.frostnova.cli.idx.sync.filter.PlatformExcludes
 import java.nio.file.Files
 import java.nio.file.FileSystems
+import java.nio.file.LinkOption
 import java.nio.file.Path
-import kotlin.io.path.isDirectory
-import kotlin.io.path.isReadable
-import kotlin.io.path.isSymbolicLink
+import java.nio.file.attribute.BasicFileAttributes
 import kotlin.io.path.name
 
 /** A discovered `.idxsync` marker together with the folder it marks. */
@@ -54,11 +53,22 @@ class SyncFolderScanner(
         onProgress: (Double, Path) -> Unit,
     ) {
         onProgress(lower, dir)
-        repository.readOrNull(dir)?.let { result += DiscoveredMarker(it, dir) }
 
-        if (dir.nameCount - baseDepth >= maxDepth) return
+        // At the depth boundary we don't descend, so a full listing would be wasted work on what may be a
+        // huge leaf directory — probe the marker directly (two stats) instead.
+        if (dir.nameCount - baseDepth >= maxDepth) {
+            repository.readOrNull(dir)?.let { result += DiscoveredMarker(it, dir) }
+            return
+        }
 
-        val children = childDirs(dir)
+        // One directory pass yields both this folder's marker and its sub-directories, with a single
+        // stat (readAttributes) per entry instead of a separate isDirectory/isReadable/isSymbolicLink probe.
+        val contents = readContents(dir)
+        contents.markerFile?.let { marker ->
+            repository.read(marker)?.let { result += DiscoveredMarker(it, dir) }
+        }
+
+        val children = contents.subDirs
         val count = children.size
         if (count == 0) return
         children.forEachIndexed { idx, child ->
@@ -68,17 +78,32 @@ class SyncFolderScanner(
         }
     }
 
-    private fun childDirs(dir: Path): List<Path> = try {
-        Files.newDirectoryStream(dir).use { stream ->
-            stream.filter { child ->
-                runCatching {
-                    child.isDirectory() && child.isReadable() && !child.isSymbolicLink() &&
-                        !isIgnoredSystemPath(child) && !isPrunable(child.name)
-                }.getOrDefault(false)
-            }.sorted()
+    /** A directory's marker file (if any) and its traversable sub-directories, from a single listing. */
+    private class DirContents(val markerFile: Path?, val subDirs: List<Path>)
+
+    private fun readContents(dir: Path): DirContents {
+        var marker: Path? = null
+        val subDirs = ArrayList<Path>()
+        try {
+            Files.newDirectoryStream(dir).use { stream ->
+                for (child in stream) {
+                    val attrs = runCatching {
+                        Files.readAttributes(child, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
+                    }.getOrNull() ?: continue
+                    val name = child.name
+                    if (name == IdxSyncFileRepository.FILENAME) {
+                        if (!attrs.isDirectory) marker = child
+                    } else if (attrs.isDirectory && !attrs.isSymbolicLink &&
+                        !isIgnoredSystemPath(child) && !isPrunable(name)
+                    ) {
+                        subDirs.add(child)
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            return DirContents(null, emptyList())
         }
-    } catch (_: Exception) {
-        emptyList()
+        return DirContents(marker, subDirs.sorted())
     }
 
     private fun isPrunable(name: String): Boolean =

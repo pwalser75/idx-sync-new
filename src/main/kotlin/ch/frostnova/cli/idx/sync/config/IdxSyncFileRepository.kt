@@ -42,8 +42,15 @@ class IdxSyncFileRepository {
     fun readOrNull(dir: Path): IdxSyncFile? {
         val path = resolve(dir)
         if (!path.exists() || !path.isRegularFile()) return null
-        return runCatching { mapper.readValue<IdxSyncFile>(path.toFile()) }.getOrNull()
+        return read(path)
     }
+
+    /**
+     * Parse a marker file whose path is already known (e.g. one discovered during a directory scan),
+     * skipping the existence/type probe. Returns `null` if unreadable or malformed.
+     */
+    fun read(markerFile: Path): IdxSyncFile? =
+        runCatching { mapper.readValue<IdxSyncFile>(markerFile.toFile()) }.getOrNull()
 
     /** Write [file] as the marker in [dir], returning the marker path. */
     fun write(dir: Path, file: IdxSyncFile): Path {
