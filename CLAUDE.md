@@ -24,7 +24,7 @@ on-disk `.idxsync` YAML format is **backward-compatible** with the original — 
 java -jar build/libs/idx-sync.jar demo 10s   # quickest way to eyeball the UI
 ```
 
-- **JDK 21** target (source/target compatibility 21, Kotlin `jvmTarget` 21). Kotlin 2.2.x, Gradle Kotlin DSL.
+- **JDK 17** target (source/target compatibility 17, Kotlin `jvmTarget` 17). Kotlin 2.2.x, Gradle Kotlin DSL.
 - Entry point: `ch.frostnova.cli.idx.sync.MainKt` (`application` plugin, `applicationName = "idx-sync"`).
 
 ## Stack

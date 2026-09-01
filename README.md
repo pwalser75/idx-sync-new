@@ -124,7 +124,7 @@ Copies preserve the source's last-modified time.
 
 ## Build
 
-Requires a JDK (built and tested on JDK 21+; the toolchain here runs on JDK 25).
+Requires a JDK (targets JDK 17+; the toolchain here runs on JDK 25).
 
 ```bash
 ./gradlew build              # compile + run tests
