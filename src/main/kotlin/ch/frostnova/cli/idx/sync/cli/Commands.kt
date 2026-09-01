@@ -1,14 +1,18 @@
 package ch.frostnova.cli.idx.sync.cli
 
+import ch.frostnova.cli.idx.sync.appVersion
 import ch.frostnova.cli.idx.sync.config.IdxSyncFile
 import ch.frostnova.cli.idx.sync.config.IdxSyncFileRepository
 import ch.frostnova.cli.idx.sync.core.SyncMode
 import ch.frostnova.cli.idx.sync.ui.ConsoleUi
 import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.Context
+import com.github.ajalt.clikt.core.ProgramResult
 import com.github.ajalt.clikt.parameters.arguments.argument
 import com.github.ajalt.clikt.parameters.arguments.default
 import com.github.ajalt.clikt.parameters.arguments.optional
+import com.github.ajalt.clikt.parameters.options.flag
+import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.types.path
 import java.nio.file.Path
 import java.util.UUID
@@ -20,20 +24,33 @@ import kotlin.io.path.isWritable
 private val DEFAULT_SOURCE_EXCLUDES = setOf("node_modules", ".git", "target", "build")
 
 /** Root command: prints the logo (runs for every invocation), then delegates to a subcommand. */
-class IdxSync(private val ui: ConsoleUi) : CliktCommand() {
-    override fun run() = ui.logo()
+class IdxSync(private val ui: ConsoleUi, private val printLogo: Boolean = true) : CliktCommand() {
+    override fun run() {
+        if (printLogo) ui.logo()
+    }
 }
 
 class Sync(private val app: SyncApplication) : CliktCommand() {
     override fun help(context: Context) = "Synchronize all matching folder pairs, or only the given source folder"
-    private val sourceId by argument(name = "source-folder-id", help = "only synchronize this source folder").optional()
-    override fun run() = app.run(SyncMode.SYNC, sourceId)
+    private val source by argument(name = "source-folder", help = "only synchronize this source folder, by folder-id, name or path").optional()
+    private val verify by option("--verify", help = "hash each copied file and check it against the source before replacing the target").flag()
+    override fun run() {
+        if (!app.run(SyncMode.SYNC, source, verify)) throw ProgramResult(1)
+    }
 }
 
 class Restore(private val app: SyncApplication) : CliktCommand() {
     override fun help(context: Context) = "Reverse sync: restore the given source folder from its target (never deletes)"
-    private val sourceId by argument(name = "source-folder-id", help = "the source folder to restore")
-    override fun run() = app.restore(sourceId)
+    private val source by argument(name = "source-folder", help = "the source folder to restore, by folder-id, name or path")
+    private val subPath by argument(name = "sub-path", help = "restrict the restore to files under this relative path").optional()
+    override fun run() {
+        if (!app.restore(source, subPath)) throw ProgramResult(1)
+    }
+}
+
+class Version(private val ui: ConsoleUi) : CliktCommand() {
+    override fun help(context: Context) = "Print the version"
+    override fun run() = ui.info("idx-sync ${appVersion()}")
 }
 
 class Scan(private val app: SyncApplication) : CliktCommand() {
@@ -75,6 +92,67 @@ class Target(private val ui: ConsoleUi, private val repository: IdxSyncFileRepos
         val marker = IdxSyncFile(folderId = UUID.randomUUID().toString(), sourceFolderId = sourceId)
         repository.write(path, marker)
         ui.success("Marked target in $path (mirrors source $sourceId)")
+    }
+}
+
+class PairCommand(
+    private val ui: ConsoleUi,
+    private val repository: IdxSyncFileRepository,
+) : CliktCommand(name = "pair") {
+    override fun help(context: Context) =
+        "Pair two folders: set up SOURCE-FOLDER as a source and TARGET-FOLDER as its target"
+    private val sourcePath by argument(name = "source-folder", help = "the folder to use as the synchronization source").path()
+    private val targetPath by argument(name = "target-folder", help = "the folder to mirror the source into").path()
+
+    override fun run() {
+        requireWritableDir(ui, sourcePath) ?: return
+        requireWritableDir(ui, targetPath) ?: return
+        val source = sourcePath.toAbsolutePath().normalize()
+        val target = targetPath.toAbsolutePath().normalize()
+        if (source == target) {
+            ui.error("source-folder and target-folder must be different"); return
+        }
+        if (source.startsWith(target) || target.startsWith(source)) {
+            ui.warn("source and target overlap (one is inside the other) — this pair will be skipped when syncing")
+        }
+
+        val sourceId = ensureSource(sourcePath)
+        writeTarget(targetPath, sourceId)
+        ui.success("Paired $sourcePath -> $targetPath")
+        ui.info("source folder-id: $sourceId")
+    }
+
+    /** Make [path] a source (reusing it as-is if it already is one) and return its folder-id. */
+    private fun ensureSource(path: Path): String {
+        val existing = repository.readOrNull(path)
+        if (existing?.isSource == true) {
+            ui.info("$path is already a source '${existing.folderName.orEmpty()}'")
+            return existing.folderId!!
+        }
+        val marker = IdxSyncFile(
+            folderId = existing?.folderId ?: UUID.randomUUID().toString(),
+            folderName = existing?.folderName ?: path.fileName?.toString() ?: path.toString(),
+            excludePatterns = existing?.excludePatterns?.takeIf { it.isNotEmpty() } ?: DEFAULT_SOURCE_EXCLUDES,
+            includeHidden = existing?.includeHidden ?: true,
+        )
+        repository.write(path, marker)
+        ui.success("Marked source '${marker.folderName}' in $path")
+        return marker.folderId!!
+    }
+
+    /** Create or update the target marker in [path] so it mirrors the source [sourceId]. */
+    private fun writeTarget(path: Path, sourceId: String) {
+        val existing = repository.readOrNull(path)
+        if (existing?.sourceFolderId == sourceId) {
+            ui.info("$path already targets this source")
+            return
+        }
+        val marker = IdxSyncFile(
+            folderId = existing?.folderId ?: UUID.randomUUID().toString(),
+            sourceFolderId = sourceId,
+        )
+        repository.write(path, marker)
+        ui.success("${if (existing == null) "Marked" else "Updated"} target in $path (mirrors source $sourceId)")
     }
 }
 

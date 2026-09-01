@@ -8,13 +8,20 @@ import ch.frostnova.cli.idx.sync.core.SyncResult
 import ch.frostnova.cli.idx.sync.diff.DiffEngine
 import ch.frostnova.cli.idx.sync.scan.SyncFolderScanner
 import ch.frostnova.cli.idx.sync.scan.SyncPairResolver
+import ch.frostnova.cli.idx.sync.sync.AtomicFileWriter
 import ch.frostnova.cli.idx.sync.sync.FileSynchronizer
 import ch.frostnova.cli.idx.sync.ui.ConsoleUi
+import ch.frostnova.cli.idx.sync.ui.formatBytes
+import java.nio.file.Files
+import java.nio.file.Path
 
 /**
  * Orchestrates the scan → compare → synchronize pipeline, matching the original tool's flow and output:
  * a cleared scan progress bar, the list of discovered markers and matching pairs, per-pair compare
  * spinners, then a cleared copy progress bar replaced by the final report.
+ *
+ * The `run`/`restore` entry points return `true` on success and `false` when something went wrong (a
+ * selector matched nothing, a precheck failed, or a file operation errored), so `main` can set an exit code.
  */
 class SyncApplication(
     private val ui: ConsoleUi = ConsoleUi(),
@@ -55,41 +62,63 @@ class SyncApplication(
     }
 
     /**
-     * Full sync: scan, compare, then apply, with the copy bar replaced by a report. When [sourceId] is
-     * given, only the pair with that source folder-id is synchronized.
+     * Full sync: scan, compare, then apply, with the copy bar replaced by a report. When [source] is given,
+     * only the pairs whose source matches it (by folder-id, folder name, or path) are synchronized. When
+     * [verify] is set, every copied file is hashed and checked against the source before it replaces the
+     * target. Returns whether the run succeeded.
      */
-    fun run(mode: SyncMode = SyncMode.SYNC, sourceId: String? = null) {
+    fun run(mode: SyncMode = SyncMode.SYNC, source: String? = null, verify: Boolean = false): Boolean {
         val startNs = System.nanoTime()
-        val pairs = selectPairs(scan(), sourceId) ?: return
+        val allPairs = scan()
+        if (allPairs.isEmpty()) return true // nothing configured — not an error
+        val scanSeconds = elapsedSeconds(startNs)
+        val pairs = selectPairs(allPairs, source) ?: return false
         ui.blank()
 
+        val compareNs = System.nanoTime()
         val changes = compareAll(pairs, mode)
+        val compareSeconds = elapsedSeconds(compareNs)
         ui.pendingChanges(count(changes, SyncAction.CREATE), count(changes, SyncAction.UPDATE), count(changes, SyncAction.DELETE))
         if (changes.isEmpty()) {
             ui.report(mode, SyncResult.EMPTY, elapsedSeconds(startNs))
-            return
+            ui.phaseTimings(scanSeconds, compareSeconds, 0.0, 0)
+            return true
         }
+
+        insufficientSpace(changes)?.let { ui.blank(); ui.error(it); return false }
         ui.blank()
 
-        // In a normal sync the source roots are strictly read-only.
-        val protected = pairs.map { it.source }
-        val result = ui.copyProgress(totalBytes(changes)) { listener -> synchronizer.sync(changes, protected, listener) }
+        // In a normal sync EVERY known source root is strictly read-only — not just the selected pairs' —
+        // so no write can ever land inside any source, even a target nested in another pair's source.
+        val protected = allPairs.map { it.source }
+        val copyNs = System.nanoTime()
+        val result = ui.copyProgress(totalBytes(changes)) { listener -> synchronizer(verify).sync(changes, protected, listener) }
+        val copySeconds = elapsedSeconds(copyNs)
         ui.report(mode, result, elapsedSeconds(startNs))
+        ui.phaseTimings(scanSeconds, compareSeconds, copySeconds, result.bytesTransferred)
+        return result.errors.isEmpty()
     }
 
     /**
-     * Restore a single source folder from its target (reverse sync, never deletes). Requires the source
-     * folder-id, shows the differences first, and asks the user to confirm before writing anything.
+     * Restore a source folder from its target (reverse sync, never deletes). Requires a source selector
+     * ([source] folder-id, folder name, or path); an optional [subPath] restricts the restore to files under
+     * that relative path. Shows the differences first and asks the user to confirm before writing anything.
+     * Returns whether the restore succeeded.
      */
-    fun restore(sourceId: String) {
+    fun restore(source: String, subPath: String? = null): Boolean {
         val startNs = System.nanoTime()
-        val pairs = selectPairs(scan(), sourceId) ?: return
+        val allPairs = scan()
+        if (allPairs.isEmpty()) return true
+        val scanSeconds = elapsedSeconds(startNs)
+        val pairs = selectPairs(allPairs, source) ?: return false
         ui.blank()
 
-        val changes = compareAll(pairs, SyncMode.RESTORE)
+        val compareNs = System.nanoTime()
+        val changes = restrictTo(compareAll(pairs, SyncMode.RESTORE), subPath)
+        val compareSeconds = elapsedSeconds(compareNs)
         if (changes.isEmpty()) {
             ui.report(SyncMode.RESTORE, SyncResult.EMPTY, elapsedSeconds(startNs))
-            return
+            return true
         }
         ui.line("The following files would be restored at the source:")
         ui.blank()
@@ -97,26 +126,73 @@ class SyncApplication(
         ui.blank()
         if (!ui.confirm("Restore ${changes.size} file(s)?")) {
             ui.warn("Aborted — nothing was restored.")
-            return
+            return true // the user chose not to proceed — not a failure
         }
+        insufficientSpace(changes)?.let { ui.blank(); ui.error(it); return false }
         ui.blank()
-        // Restore writes the source; the target is the read-only side here.
-        val protected = pairs.map { it.target }
+        // Restore writes the source; EVERY known target is the read-only side here.
+        val protected = allPairs.map { it.target }
+        val copyNs = System.nanoTime()
         val result = ui.copyProgress(totalBytes(changes)) { listener -> synchronizer.sync(changes, protected, listener) }
+        val copySeconds = elapsedSeconds(copyNs)
         ui.report(SyncMode.RESTORE, result, elapsedSeconds(startNs))
+        ui.phaseTimings(scanSeconds, compareSeconds, copySeconds, result.bytesTransferred)
+        return result.errors.isEmpty()
     }
 
-    /** Narrow [pairs] to a single source folder-id, or return all. `null` = nothing to do (already reported). */
-    private fun selectPairs(pairs: List<SyncPair>, sourceId: String?): List<SyncPair>? {
-        if (pairs.isEmpty()) return null
-        if (sourceId == null) return pairs
-        val selected = pairs.filter { it.sourceId == sourceId }
+    /**
+     * Narrow [pairs] to those whose source matches [selector] — its `folder-id`, folder name, or path —
+     * returning every match (several pairs may share a source). A `null` [selector] selects all pairs.
+     * Returns `null` when the selector matched nothing (an error is reported). [pairs] must be non-empty.
+     */
+    private fun selectPairs(pairs: List<SyncPair>, selector: String?): List<SyncPair>? {
+        if (selector == null) return pairs
+        val selected = matchPairs(pairs, selector)
         if (selected.isEmpty()) {
             ui.blank()
-            ui.warn("No matching sync pair for source folder-id '$sourceId'.")
+            ui.error("No sync pair matches source folder-id, name or path '$selector'.")
             return null
         }
         return selected
+    }
+
+    /** Keep only changes whose relative path is at or under [subPath] (all changes when [subPath] is null). */
+    private fun restrictTo(changes: List<FileChange>, subPath: String?): List<FileChange> {
+        if (subPath.isNullOrBlank()) return changes
+        val prefix = Path.of(subPath)
+        return changes.filter { it.relativePath == prefix || it.relativePath.startsWith(prefix) }
+    }
+
+    /** A verifying synchronizer when [verify] is on, otherwise the injected default. */
+    private fun synchronizer(verify: Boolean): FileSynchronizer =
+        if (verify) FileSynchronizer(AtomicFileWriter(verify = true)) else synchronizer
+
+    /**
+     * A message when the bytes to be written won't fit on a destination filesystem, or `null` if they will.
+     * Sizes are summed per file store; an UPDATE is counted at full size because the crash-safe writer keeps
+     * the old file until the new one is complete, so peak usage is the new size.
+     */
+    private fun insufficientSpace(changes: List<FileChange>): String? {
+        val perStore = HashMap<java.nio.file.FileStore, Long>()
+        for (change in changes) {
+            if (change.action != SyncAction.CREATE && change.action != SyncAction.UPDATE) continue
+            val store = runCatching { Files.getFileStore(nearestExisting(change.destination)) }.getOrNull() ?: continue
+            perStore.merge(store, change.size) { a, b -> a + b }
+        }
+        for ((store, required) in perStore) {
+            val usable = runCatching { store.usableSpace }.getOrDefault(Long.MAX_VALUE)
+            if (required > usable) {
+                return "not enough free space on '${store.name()}': need ${formatBytes(required)}, only ${formatBytes(usable)} free"
+            }
+        }
+        return null
+    }
+
+    /** The nearest ancestor of [path] that exists (so its file store can be queried before we create it). */
+    private fun nearestExisting(path: Path): Path {
+        var p = path.toAbsolutePath()
+        while (!Files.exists(p) && p.parent != null) p = p.parent
+        return p
     }
 
     private fun totalBytes(changes: List<FileChange>): Long = changes
@@ -135,4 +211,20 @@ class SyncApplication(
     private fun count(changes: List<FileChange>, action: SyncAction) = changes.count { it.action == action }
 
     private fun elapsedSeconds(startNs: Long): Double = (System.nanoTime() - startNs) / 1e9
+
+    companion object {
+        /**
+         * All [pairs] whose source matches [selector], by `folder-id`, folder name, or filesystem path
+         * (the pair's source or target directory). Returns every match, so multiple pairs sharing a source
+         * id/name are all selected.
+         */
+        internal fun matchPairs(pairs: List<SyncPair>, selector: String): List<SyncPair> {
+            val asPath = runCatching { Path.of(selector).toAbsolutePath().normalize() }.getOrNull()
+            return pairs.filter { pair ->
+                pair.sourceId == selector || pair.name == selector ||
+                    (asPath != null && (pair.source.toAbsolutePath().normalize() == asPath ||
+                        pair.target.toAbsolutePath().normalize() == asPath))
+            }
+        }
+    }
 }
