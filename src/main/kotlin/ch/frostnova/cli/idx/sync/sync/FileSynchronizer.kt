@@ -5,6 +5,7 @@ import ch.frostnova.cli.idx.sync.core.SyncAction
 import ch.frostnova.cli.idx.sync.core.SyncResult
 import java.io.IOException
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.SimpleFileVisitor
 import java.nio.file.attribute.BasicFileAttributes
@@ -48,7 +49,7 @@ class FileSynchronizer(private val writer: AtomicFileWriter = AtomicFileWriter()
         protectedRoots: List<Path> = emptyList(),
         listener: SyncListener = SyncListener.NONE,
     ): SyncResult {
-        val protected = protectedRoots.map { it.toAbsolutePath().normalize() }
+        val protected = protectedRoots.map { realLocation(it) }
         var result = SyncResult.EMPTY
         changes.forEachIndexed { index, change ->
             listener.onChangeStart(change, index, changes.size)
@@ -70,8 +71,26 @@ class FileSynchronizer(private val writer: AtomicFileWriter = AtomicFileWriter()
 
     private fun isProtected(destination: Path, protected: List<Path>): Boolean {
         if (protected.isEmpty()) return false
-        val dest = destination.toAbsolutePath().normalize()
+        val dest = realLocation(destination)
         return protected.any { dest.startsWith(it) }
+    }
+
+    /**
+     * The **physical** location a path points at: symbolic links in the already-existing portion of the
+     * path are resolved (via [Path.toRealPath]), while any not-yet-created tail is kept lexically. This
+     * makes the read-only guard robust against a symlinked directory that would otherwise disguise a write
+     * or delete landing inside a protected source (a purely lexical `normalize()` would miss it).
+     */
+    private fun realLocation(path: Path): Path {
+        var existing = path.toAbsolutePath()
+        val tail = ArrayDeque<Path>()
+        while (existing.parent != null && !Files.exists(existing, LinkOption.NOFOLLOW_LINKS)) {
+            existing.fileName?.let { tail.addFirst(it) }
+            existing = existing.parent
+        }
+        var real = runCatching { existing.toRealPath() }.getOrElse { existing.normalize() }
+        for (segment in tail) real = real.resolve(segment)
+        return real.normalize()
     }
 
     private fun copy(change: FileChange, listener: SyncListener): SyncResult {

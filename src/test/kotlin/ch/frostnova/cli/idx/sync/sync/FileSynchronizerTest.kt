@@ -3,11 +3,14 @@ package ch.frostnova.cli.idx.sync.sync
 import ch.frostnova.cli.idx.sync.core.FileChange
 import ch.frostnova.cli.idx.sync.core.SyncAction
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.createDirectories
 import kotlin.io.path.exists
+import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.readText
 import kotlin.io.path.writeText
 
@@ -114,6 +117,65 @@ class FileSynchronizerTest {
         assertThat(result.errors).hasSize(2)
         assertThat(result.errors).allMatch { it.contains("read-only source") }
         assertThat(result.created + result.updated + result.deleted).isEqualTo(0)
+    }
+
+    @Test
+    fun `protects every configured source root, not only the first`(@TempDir dir: Path) {
+        val sourceA = dir.resolve("a").apply { createDirectories() }
+        val sourceB = dir.resolve("b").apply { createDirectories() }
+        val victim = sourceB.resolve("keep.txt").apply { writeText("PRECIOUS") }
+        val payload = dir.resolve("payload.txt").apply { writeText("data") }
+
+        val result = synchronizer.sync(
+            listOf(FileChange(victim.fileName, payload, victim, SyncAction.UPDATE, 4)),
+            protectedRoots = listOf(sourceA, sourceB),
+        )
+
+        assertThat(victim.readText()).isEqualTo("PRECIOUS")
+        assertThat(result.errors).singleElement().asString().contains("read-only source")
+    }
+
+    @Test
+    fun `refuses a write that a symlinked destination would land inside a protected source`(@TempDir dir: Path) {
+        val source = dir.resolve("src").apply { createDirectories() }
+        source.resolve("existing.txt").writeText("PRECIOUS SOURCE DATA")
+        val target = dir.resolve("tgt").apply { createDirectories() }
+        // A booby-trapped symlink inside the target that resolves into the source.
+        val link = target.resolve("link")
+        assumeSymlink(link, source)
+        val payload = dir.resolve("payload.txt").apply { writeText("attacker") }
+
+        // A CREATE whose lexical path is under the target, but physically lands in the source via the link.
+        val sneaky = FileChange(Path.of("link/new.txt"), payload, link.resolve("new.txt"), SyncAction.CREATE, 8)
+        val result = synchronizer.sync(listOf(sneaky), protectedRoots = listOf(source))
+
+        assertThat(result.errors).singleElement().asString().contains("read-only source")
+        // Nothing was written into the source — not even a temp/backup file.
+        assertThat(source.listDirectoryEntries().map { it.fileName.toString() }).containsExactly("existing.txt")
+    }
+
+    @Test
+    fun `refuses deleting a target-side symlink that points into a protected source`(@TempDir dir: Path) {
+        val source = dir.resolve("src").apply { createDirectories() }
+        source.resolve("keep.txt").writeText("PRECIOUS SOURCE DATA")
+        val target = dir.resolve("tgt").apply { createDirectories() }
+        val link = target.resolve("link")
+        assumeSymlink(link, source)
+
+        val result = synchronizer.sync(
+            listOf(FileChange(Path.of("link"), source, link, SyncAction.DELETE)),
+            protectedRoots = listOf(source),
+        )
+
+        assertThat(result.errors).singleElement().asString().contains("read-only source")
+        assertThat(source.resolve("keep.txt").readText()).isEqualTo("PRECIOUS SOURCE DATA")
+        assertThat(source.exists()).isTrue()
+    }
+
+    /** Create a symbolic link, or skip the test on platforms/filesystems that don't allow it (e.g. Windows without privilege). */
+    private fun assumeSymlink(link: Path, target: Path) {
+        val created = runCatching { Files.createSymbolicLink(link, target) }.isSuccess
+        assumeTrue(created, "symbolic links not supported in this environment")
     }
 
     @Test
