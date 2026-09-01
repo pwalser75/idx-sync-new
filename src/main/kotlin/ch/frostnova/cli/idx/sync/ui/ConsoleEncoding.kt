@@ -5,6 +5,7 @@ import com.sun.jna.win32.StdCallLibrary
 import java.io.FileDescriptor
 import java.io.FileOutputStream
 import java.io.PrintStream
+import java.nio.charset.Charset
 
 /**
  * Makes the console able to render the tool's Unicode output — the emoji status icons and the block-glyph
@@ -29,10 +30,10 @@ object ConsoleEncoding {
         // Emit UTF-8 bytes so glyphs aren't replaced with '?'. Only rewrap when the stream isn't already
         // UTF-8 (Linux/macOS usually are), keeping the working platforms untouched.
         runCatching {
-            if (System.out.charset() != Charsets.UTF_8) {
+            if (streamCharset("sun.stdout.encoding") != Charsets.UTF_8) {
                 System.setOut(PrintStream(FileOutputStream(FileDescriptor.out), true, Charsets.UTF_8))
             }
-            if (System.err.charset() != Charsets.UTF_8) {
+            if (streamCharset("sun.stderr.encoding") != Charsets.UTF_8) {
                 System.setErr(PrintStream(FileOutputStream(FileDescriptor.err), true, Charsets.UTF_8))
             }
         }
@@ -40,6 +41,17 @@ object ConsoleEncoding {
         // non-Windows (so Linux/macOS need no native library for this). Failure is non-fatal.
         if (isWindows) runCatching { Kernel32.INSTANCE.SetConsoleOutputCP(CODE_PAGE_UTF8) }
     }
+
+    /**
+     * The charset the JVM chose for a standard stream, read from its encoding property. This is the
+     * Java 17-compatible stand-in for `PrintStream.charset()` (added in Java 18): the launcher sets
+     * `sun.std{out,err}.encoding` for a real console and otherwise the stream falls back to `file.encoding`.
+     * An unset/unknown name defaults to the platform charset — the same source the JVM itself uses.
+     */
+    private fun streamCharset(encodingProperty: String): Charset =
+        runCatching {
+            charset(System.getProperty(encodingProperty) ?: System.getProperty("file.encoding"))
+        }.getOrElse { Charset.defaultCharset() }
 
     private val isWindows: Boolean
         get() = System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true)

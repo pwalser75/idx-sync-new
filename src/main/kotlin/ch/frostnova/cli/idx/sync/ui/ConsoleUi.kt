@@ -137,6 +137,17 @@ class ConsoleUi(val terminal: Terminal = Terminal(), private val ascii: Boolean 
         pairs.forEach { p -> line(delete("- $iconWarn ${(bold + delete)(p.name)} ${p.source} <-> ${p.target}")) }
     }
 
+    /** Header for a single pair's diff block: its name, then its source and target directories. */
+    fun pairDiffHeader(pair: SyncPair) {
+        line("$iconCheck ${(bold + main)(pair.name)}")
+        terminal.println(
+            grid {
+                row(muted("   source"), pair.source.toString())
+                row(muted("   target"), pair.target.toString())
+            },
+        )
+    }
+
     /** Detailed per-file change listing (used by `diff`), coloured by action. */
     fun listChanges(changes: List<ch.frostnova.cli.idx.sync.core.FileChange>) {
         changes.filter { it.action == ch.frostnova.cli.idx.sync.core.SyncAction.CREATE }

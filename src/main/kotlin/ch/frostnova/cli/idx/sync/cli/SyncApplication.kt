@@ -47,18 +47,26 @@ class SyncApplication(
         return pairs // overlapping pairs are reported but never synchronized
     }
 
-    /** Scan + compare and print the pending changes without applying them. */
-    fun diff(mode: SyncMode = SyncMode.SYNC): List<FileChange> {
-        val pairs = scan()
-        if (pairs.isEmpty()) return emptyList()
-        ui.blank()
-        val changes = compareAll(pairs, mode)
-        ui.pendingChanges(count(changes, SyncAction.CREATE), count(changes, SyncAction.UPDATE), count(changes, SyncAction.DELETE))
-        if (changes.isNotEmpty()) {
-            ui.blank()
-            ui.listChanges(changes)
+    /**
+     * Scan + compare and print the pending changes without applying them, grouped per folder pair: each
+     * pair's name and source/target directories, then its changes since the last sync. When [source] is
+     * given, only the pairs whose source matches it (by folder-id, folder name, or path) are reported.
+     */
+    fun diff(mode: SyncMode = SyncMode.SYNC, source: String? = null): List<FileChange> {
+        val allPairs = scan()
+        if (allPairs.isEmpty()) return emptyList()
+        val pairs = selectPairs(allPairs, source) ?: return emptyList()
+        val perPair = compareEach(pairs, mode)
+        perPair.forEach { (pair, changes) ->
+            if (changes.isNotEmpty()) {
+                ui.blank()
+                ui.pairDiffHeader(pair)
+                ui.pendingChanges(count(changes, SyncAction.CREATE), count(changes, SyncAction.UPDATE), count(changes, SyncAction.DELETE))
+                ui.blank()
+                ui.listChanges(changes)
+            }
         }
-        return changes
+        return perPair.flatMap { it.second }
     }
 
     /**
@@ -200,11 +208,15 @@ class SyncApplication(
         .sumOf { it.size }
 
     private fun compareAll(pairs: List<SyncPair>, mode: SyncMode): List<FileChange> =
+        compareEach(pairs, mode).flatMap { it.second }
+
+    /** Compare every pair under one in-place progress line, keeping each pair's changes grouped. */
+    private fun compareEach(pairs: List<SyncPair>, mode: SyncMode): List<Pair<SyncPair, List<FileChange>>> =
         // One in-place progress line for the whole compare phase, cleared when done — leaving only the
-        // "Changes since last sync" summary.
+        // per-pair "Changes since last sync" summaries.
         ui.spinner("Comparing") { detail ->
-            pairs.flatMap { pair ->
-                diffEngine.diff(pair, mode) { path -> detail("${pair.name}: $path") }
+            pairs.map { pair ->
+                pair to diffEngine.diff(pair, mode) { path -> detail("${pair.name}: $path") }
             }
         }
 

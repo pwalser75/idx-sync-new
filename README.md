@@ -32,7 +32,7 @@ tests.
 ```bash
 idx-sync                       # no arguments: print usage
 idx-sync scan                  # find markers and list matching sync pairs
-idx-sync diff                  # show pending changes without applying them
+idx-sync diff [source]         # show pending changes (all pairs, or only the source matching <source>) without applying them
 idx-sync sync [source]         # synchronize all pairs, or only the source matching <source> (folder-id, name or path)
 idx-sync sync <source> --verify # ...and hash-check every copied file against the source before replacing the target
 idx-sync source <path> <name>  # mark a folder as a synchronization source
@@ -56,6 +56,11 @@ Scanning is a quick, shallow sweep of the filesystem roots and the current direc
 depth), with a progress bar that clears when done — it then lists the discovered markers and the matching
 pairs. The copy phase shows a wide, byte-accurate progress bar that is replaced by a summary report
 (created / updated / deleted / elapsed) when it finishes.
+
+`diff` reports its results **grouped per folder pair**: for each pair it prints the pair's name and its
+source / target directories, followed by that pair's changes since the last sync. Like `sync` and
+`restore`, it accepts an optional source **selector** (folder-id, folder name, source path or target path)
+to restrict the report to the matching pair(s); with no selector it reports every pair.
 
 ### Marking folders
 

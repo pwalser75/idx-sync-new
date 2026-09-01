@@ -39,12 +39,20 @@ dependencies {
 kotlin {
     compilerOptions {
         jvmTarget = JvmTarget.JVM_17
+        // Limit the visible JDK API to release 17 (like javac's --release), so building on a newer JDK
+        // can't slip in a method that only exists in a later release (e.g. PrintStream.charset(), Java 18+).
+        freeCompilerArgs.add("-Xjdk-release=17")
     }
 }
 
 java {
     sourceCompatibility = JavaVersion.VERSION_17
     targetCompatibility = JavaVersion.VERSION_17
+}
+
+// Same guard for the Java compiler: verify against the JDK 17 API, not just emit 17 bytecode.
+tasks.withType<JavaCompile>().configureEach {
+    options.release = 17
 }
 
 application {

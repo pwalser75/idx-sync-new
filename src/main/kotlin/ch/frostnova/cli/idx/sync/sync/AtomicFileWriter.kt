@@ -52,6 +52,7 @@ class AtomicFileWriter(
      * [destination] using the crash-safe temp→backup→rename scheme, stamping [lastModified] on the result.
      * If [input] fails partway, the original [destination] is untouched and no temp files remain.
      */
+    @SuppressWarnings("kotlin:S3776")
     internal fun write(input: InputStream, destination: Path, lastModified: FileTime, onBytes: (Long) -> Unit = {}) {
         val dir = destination.parent
         if (dir != null) Files.createDirectories(dir)

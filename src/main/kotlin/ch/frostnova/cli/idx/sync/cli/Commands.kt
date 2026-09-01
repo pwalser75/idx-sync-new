@@ -60,7 +60,8 @@ class Scan(private val app: SyncApplication) : CliktCommand() {
 
 class Diff(private val app: SyncApplication) : CliktCommand() {
     override fun help(context: Context) = "Scan and compare pairs, reporting pending changes without applying them"
-    override fun run() { app.diff(SyncMode.SYNC) }
+    private val source by argument(name = "source-folder", help = "only compare this source folder, by folder-id, name or path").optional()
+    override fun run() { app.diff(SyncMode.SYNC, source) }
 }
 
 class Source(private val ui: ConsoleUi, private val repository: IdxSyncFileRepository) : CliktCommand() {
