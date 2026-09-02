@@ -88,7 +88,7 @@ them, and they should stay covered by tests:
 
 ## Commands (user-facing surface)
 
-`scan` · `diff` · `sync [source] [--verify]` · `source <path> <name>` · `target <path> <id>` ·
+`scan` · `diff` · `sync [source] [--verify]` · `source <path> [name]` · `target <path> <id>` ·
 `pair <source> <target>` · `remove <path>` · `restore <source> [sub-path]` · `version` · `demo <duration>`.
 No args → usage. The banner is `src/main/resources/banner.txt`. `sync`/`restore` accept a source
 **selector** that matches a pair's source by `folder-id`, folder name, **or** path (source or target dir);

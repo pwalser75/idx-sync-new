@@ -81,6 +81,43 @@ class CommandsTest {
         assertThatThrownBy { parseDurationMillis("5 weeks") }.isInstanceOf(IllegalArgumentException::class.java)
     }
 
+    /** Parse `source <path> [name]` through the real root command, as `main` wires it. */
+    private fun source(path: Path, name: String? = null) {
+        IdxSync(ConsoleUi()).subcommands(Source(ConsoleUi(), repo))
+            .parse(listOfNotNull("source", path.toString(), name))
+    }
+
+    @Test
+    fun `source defaults the name to the folder name`(@TempDir root: Path) {
+        val folder = root.resolve("ti8m-documents").createDirectories()
+
+        source(folder)
+
+        assertThat(repo.readOrNull(folder)!!.folderName).isEqualTo("ti8m-documents")
+    }
+
+    @Test
+    fun `source still honours an explicit name`(@TempDir root: Path) {
+        val folder = root.resolve("ti8m-documents").createDirectories()
+
+        source(folder, "Work Documents")
+
+        assertThat(repo.readOrNull(folder)!!.folderName).isEqualTo("Work Documents")
+    }
+
+    @Test
+    fun `default name resolves relative paths to the folder they point at`(@TempDir root: Path) {
+        val folder = root.resolve("docs").createDirectories()
+
+        assertThat(defaultFolderName(folder.resolve("."))).isEqualTo("docs")
+        assertThat(defaultFolderName(folder.resolve("sub/.."))).isEqualTo("docs")
+    }
+
+    @Test
+    fun `default name is null for a filesystem root so callers can require an explicit name`() {
+        assertThat(defaultFolderName(Path.of("/"))).isNull()
+    }
+
     @Test
     fun `written marker does not leak computed properties`(@TempDir dir: Path) {
         val repo = IdxSyncFileRepository()

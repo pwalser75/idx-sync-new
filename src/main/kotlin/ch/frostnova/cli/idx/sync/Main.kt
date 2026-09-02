@@ -16,6 +16,7 @@ import ch.frostnova.cli.idx.sync.config.IdxSyncFileRepository
 import ch.frostnova.cli.idx.sync.ui.ConsoleEncoding
 import ch.frostnova.cli.idx.sync.ui.ConsoleUi
 import com.github.ajalt.clikt.core.CliktError
+import com.github.ajalt.clikt.core.ContextCliktError
 import com.github.ajalt.clikt.core.PrintHelpMessage
 import com.github.ajalt.clikt.core.PrintMessage
 import com.github.ajalt.clikt.core.parse
@@ -75,10 +76,20 @@ fun main(args: Array<String>) {
     } catch (e: CliktError) {
         // ProgramResult (a failed sync/restore) carries no message and printError=false — the command
         // already printed its own report, so just adopt its status code. Genuine usage errors do print.
-        if (e.printError && !e.message.isNullOrBlank()) {
+        if (e.printError) {
             ui.logo()
-            ui.error(e.message!!)
-            ui.usage()
+            // A UsageError (e.g. a missing argument) carries no `message` — its text is only available
+            // formatted against the context of the (sub)command that failed, which also gives us that
+            // command's own usage line rather than the generic top-level one.
+            val formatted = (e as? ContextCliktError)?.context?.command?.getFormattedHelp(e)
+            when {
+                !formatted.isNullOrBlank() -> println(formatted)
+                !e.message.isNullOrBlank() -> {
+                    ui.error(e.message!!)
+                    ui.usage()
+                }
+                else -> ui.usage()
+            }
         }
         e.statusCode.takeIf { it != 0 } ?: 1
     } catch (e: Throwable) {

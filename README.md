@@ -35,7 +35,7 @@ idx-sync scan                  # find markers and list matching sync pairs
 idx-sync diff [source]         # show pending changes (all pairs, or only the source matching <source>) without applying them
 idx-sync sync [source]         # synchronize all pairs, or only the source matching <source> (folder-id, name or path)
 idx-sync sync <source> --verify # ...and hash-check every copied file against the source before replacing the target
-idx-sync source <path> <name>  # mark a folder as a synchronization source
+idx-sync source <path> [name]  # mark a folder as a synchronization source (name defaults to the folder's name; required for a filesystem root)
 idx-sync target <path> <id>    # mark a folder as a target mirroring source <id>
 idx-sync pair <source> <target> # set up a source and a target mirroring it, in one step
 idx-sync remove <path>         # remove a folder's .idxsync marker
@@ -141,6 +141,22 @@ Run the fat jar directly:
 
 ```bash
 java -jar build/libs/idx-sync.jar demo 10s
+```
+
+## Shell function snippet
+
+Build and copy to your home folder:
+
+```bash
+./gradlew && cp build/libs/idx-sync.jar ~ 
+```
+
+Then you can define the following shell function to run it from anywhere with `idxsync`:
+
+```bash
+function idxsync() {
+  java -jar ~/idx-sync.jar "$@"
+}
 ```
 
 ## Architecture

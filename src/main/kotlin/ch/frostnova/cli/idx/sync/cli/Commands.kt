@@ -23,6 +23,17 @@ import kotlin.io.path.isWritable
 /** Default exclude patterns seeded into a newly-marked source folder. */
 private val DEFAULT_SOURCE_EXCLUDES = setOf("node_modules", ".git", "target", "build")
 
+/**
+ * Display name to use for a source folder when none was given: the folder's own name, or `null` when the
+ * path is a filesystem root (`/`, `C:\`, `\\server\share\`) — a root has no folder name to borrow, so the
+ * caller must ask the user for one instead of guessing.
+ *
+ * The path is made absolute first, so relative arguments (`.`, `..`) name the folder they resolve to
+ * rather than themselves.
+ */
+internal fun defaultFolderName(path: Path): String? =
+    path.toAbsolutePath().normalize().fileName?.toString()?.takeIf { it.isNotBlank() }
+
 /** Root command: prints the logo (runs for every invocation), then delegates to a subcommand. */
 class IdxSync(private val ui: ConsoleUi, private val printLogo: Boolean = true) : CliktCommand() {
     override fun run() {
@@ -67,10 +78,14 @@ class Diff(private val app: SyncApplication) : CliktCommand() {
 class Source(private val ui: ConsoleUi, private val repository: IdxSyncFileRepository) : CliktCommand() {
     override fun help(context: Context) = "Mark a folder as a synchronization source"
     private val path by argument(help = "the folder to mark as a source").path()
-    private val name by argument(help = "a display name for the folder")
+    private val name by argument(help = "a display name for the folder (default: the folder's name)").optional()
 
     override fun run() {
         requireWritableDir(ui, path) ?: return
+        val name = name ?: defaultFolderName(path) ?: run {
+            ui.error("$path is a filesystem root and has no folder name — please pass a name explicitly")
+            return
+        }
         val marker = IdxSyncFile(
             folderId = UUID.randomUUID().toString(),
             folderName = name,
@@ -117,22 +132,26 @@ class PairCommand(
             ui.warn("source and target overlap (one is inside the other) — this pair will be skipped when syncing")
         }
 
-        val sourceId = ensureSource(sourcePath)
+        val sourceId = ensureSource(sourcePath) ?: return
         writeTarget(targetPath, sourceId)
         ui.success("Paired $sourcePath -> $targetPath")
         ui.info("source folder-id: $sourceId")
     }
 
-    /** Make [path] a source (reusing it as-is if it already is one) and return its folder-id. */
-    private fun ensureSource(path: Path): String {
+    /** Make [path] a source (reusing it as-is if it already is one) and return its folder-id, or null on error. */
+    private fun ensureSource(path: Path): String? {
         val existing = repository.readOrNull(path)
         if (existing?.isSource == true) {
             ui.info("$path is already a source '${existing.folderName.orEmpty()}'")
             return existing.folderId!!
         }
+        val folderName = existing?.folderName ?: defaultFolderName(path) ?: run {
+            ui.error("$path is a filesystem root and has no folder name — mark it as a source with an explicit name first")
+            return null
+        }
         val marker = IdxSyncFile(
             folderId = existing?.folderId ?: UUID.randomUUID().toString(),
-            folderName = existing?.folderName ?: path.fileName?.toString() ?: path.toString(),
+            folderName = folderName,
             excludePatterns = existing?.excludePatterns?.takeIf { it.isNotEmpty() } ?: DEFAULT_SOURCE_EXCLUDES,
             includeHidden = existing?.includeHidden ?: true,
         )
