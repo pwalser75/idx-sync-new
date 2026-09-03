@@ -63,7 +63,10 @@ them, and they should stay covered by tests:
    (`fd.sync()`), then atomically swap (old → backup → replace → drop backup). An abort or power loss
    mid-copy must never corrupt or lose the target. Beware `ATOMIC_MOVE` failing across filesystems — the
    fallback must still be crash-safe. `AtomicFileWriter(verify = true)` additionally hash-checks the written
-   bytes against the source before the rename (wired to `sync --verify`).
+   bytes against the source before the rename (wired to `sync --verify`). `AtomicFileWriter(durable = false)`
+   (wired to `sync --fast`) skips only the per-file `fsync` — the temp→backup→rename dance still keeps an
+   **abort** crash-safe; it trades *power-loss* durability for speed (a huge win on spinning disks and when
+   source and target share one device, where every fsync forces a seek). The default stays `durable = true`.
 3. **Backup-safe** — a 0-byte, missing, unreadable, or non-regular source is **skipped and reported**,
    never written over a good target.
 4. **`restore` never deletes** — restore is the only mode that writes to a source, and it only
@@ -76,7 +79,9 @@ them, and they should stay covered by tests:
 - **Platform excludes are data, not code** — they live in `src/main/resources/platform-excludes.yaml`,
   matched by file/dir name, case-insensitively (excluding a dir prunes its subtree). Add/change excludes
   there, not in code. The always-on set is grouped (`idx-sync`, `windows`, `macos`, `linux`,
-  `editors-and-temp`); the `editors-and-temp` group is the safe place for generic junk like `*.bak`.
+  `editors-and-temp`, `development`); the `editors-and-temp` group is the safe place for generic junk like
+  `*.bak`, and `development` holds regenerable dev artifacts / VCS metadata (`node_modules`, `.git`, `.svn`,
+  `.hg`, `CVS`, `__pycache__`) — VCS metadata is excluded by design, so a sync won't preserve repo history.
   Be cautious adding to the always-on set for a *backup* tool — patterns there can never be turned off
   per-folder, so anything with real-file false positives (e.g. `*.log`, `build`, `dist`) belongs in
   per-folder `exclude-patterns`, not here.
@@ -88,7 +93,7 @@ them, and they should stay covered by tests:
 
 ## Commands (user-facing surface)
 
-`scan` · `diff` · `sync [source] [--verify]` · `source <path> [name]` · `target <path> <id>` ·
+`scan` · `diff` · `sync [source] [--verify] [--fast]` · `source <path> [name]` · `target <path> <id>` ·
 `pair <source> <target>` · `remove <path>` · `restore <source> [sub-path]` · `version` · `demo <duration>`.
 No args → usage. The banner is `src/main/resources/banner.txt`. `sync`/`restore` accept a source
 **selector** that matches a pair's source by `folder-id`, folder name, **or** path (source or target dir);

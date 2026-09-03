@@ -29,11 +29,25 @@ class PlatformExcludesTest {
     }
 
     @Test
+    fun `excludes developer artifacts (VCS metadata and dependency caches)`() {
+        val all = PlatformExcludes.ALL
+        assertThat(all.excludes("node_modules")).isTrue()
+        assertThat(all.excludes("__pycache__")).isTrue()
+        assertThat(all.excludes(".git")).isTrue()
+        assertThat(all.excludes(".GIT")).isTrue() // case-insensitive
+        assertThat(all.excludes(".svn")).isTrue()
+        assertThat(all.excludes(".hg")).isTrue()
+        assertThat(all.excludes("CVS")).isTrue()
+    }
+
+    @Test
     fun `keeps normal files`() {
         val all = PlatformExcludes.ALL
         assertThat(all.excludes("report.pdf")).isFalse()
         assertThat(all.excludes("photo.jpg")).isFalse()
         assertThat(all.excludes("thumbs.database")).isFalse()
+        assertThat(all.excludes("node_modules.txt")).isFalse() // only the exact dir name is excluded
+        assertThat(all.excludes("git")).isFalse()
     }
 }
 

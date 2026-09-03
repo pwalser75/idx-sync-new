@@ -24,7 +24,8 @@ tests.
   written over a good target.
 - **Restore mode** — reverse a sync to recover files at the source; restore **never deletes**.
 - **Smart excludes** — per-folder `exclude-patterns` plus a built-in always-exclude set of platform
-  system/junk files (Windows, macOS, Linux) and idx-sync's own control files.
+  system/junk files (Windows, macOS, Linux), regenerable developer artifacts (`node_modules`, `.git`,
+  `.svn`, …) and idx-sync's own control files.
 - **Demo mode** — simulate a whole run to admire (or test) the UI, without touching any files.
 
 ## Usage
@@ -110,9 +111,18 @@ are matched per file/directory name, case-insensitively (excluding a directory p
 | Group | Always-excluded names |
 |-------|-----------------------|
 | **idx-sync** (all platforms) | `.idxsync`, and its in-flight temp/backup files `*.idxtmp`, `*.idxbak`, `.*.idxtmp`, `.*.idxbak` |
+| **editors-and-temp** | `*.bak` |
+| **development** | `node_modules`, `__pycache__`, `.git`, `.svn`, `.hg`, `CVS` |
 | **Windows** | `Thumbs.db`, `ehthumbs.db`, `ehthumbs_vista.db`, `desktop.ini`, `pagefile.sys`, `hiberfil.sys`, `swapfile.sys`, `$RECYCLE.BIN`, `RECYCLER`, `System Volume Information`, `MSOCache`, `$Windows.~BT`, `$Windows.~WS` |
 | **macOS** | `.DS_Store`, `._*` (AppleDouble resource forks), `.AppleDouble`, `.LSOverride`, `.DocumentRevisions-V100`, `.fseventsd`, `.Spotlight-V100`, `.TemporaryItems`, `.Trashes`, `.VolumeIcon.icns`, `.com.apple.timemachine.donotpresent`, `.AppleDB`, `.AppleDesktop`, `.apdisk`, `Network Trash Folder`, `Temporary Items` |
 | **Linux** | `.directory`, `lost+found`, `.Trash-*`, `.nfs*`, `.fuse_hidden*` |
+
+The **development** group holds regenerable developer artifacts and version-control metadata that don't
+belong in a backup. Excluding a directory prunes its whole subtree, so a huge `node_modules` or `.git`
+folder is skipped entirely — which also keeps scans fast. Note this is a deliberate trade-off for a *backup*
+tool: excluding `.git` / `.svn` / `.hg` means a sync does **not** preserve repository history. If you need a
+repo's history mirrored, back up a bundle/dump of it instead. Names with real-file false positives (e.g.
+`build`, `dist`, `target`) are intentionally **not** here — put those in a folder's own `exclude-patterns`.
 
 To add or change one, edit `platform-excludes.yaml` — no code change needed.
 

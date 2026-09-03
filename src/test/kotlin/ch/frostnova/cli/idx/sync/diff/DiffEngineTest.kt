@@ -48,6 +48,21 @@ class DiffEngineTest {
     }
 
     @Test
+    fun `reports scan and compute phases so the UI never looks frozen`(@TempDir source: Path, @TempDir target: Path) {
+        file(source, "a.txt", "hello")
+        file(target, "old.txt", "gone")
+
+        val statuses = mutableListOf<String>()
+        engine.diff(pair(source, target)) { statuses.add(it) }
+
+        // The scan phases label which side is being walked, and a distinct compute phase is announced once
+        // the walks are done — otherwise the UI would sit on the last scanned path during the in-memory diff.
+        assertThat(statuses).anyMatch { it.startsWith("scanning source:") }
+        assertThat(statuses).anyMatch { it.startsWith("scanning target:") }
+        assertThat(statuses.last()).startsWith("computing changes")
+    }
+
+    @Test
     fun `identical files by size and mtime are not updated`(@TempDir source: Path, @TempDir target: Path) {
         val t = Instant.parse("2026-05-05T12:00:00Z")
         file(source, "a.txt", "content", t)

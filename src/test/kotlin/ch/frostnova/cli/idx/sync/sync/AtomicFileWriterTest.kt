@@ -61,6 +61,38 @@ class AtomicFileWriterTest {
     }
 
     @Test
+    fun `relaxed-durability writer still copies correctly and preserves last-modified`(@TempDir dir: Path) {
+        val mtime = Instant.parse("2026-03-03T10:00:00Z")
+        val source = dir.resolve("s.txt").apply { writeText("fast but crash-safe"); setLastModifiedTime(FileTime.from(mtime)) }
+        val dest = dir.resolve("out/d.txt")
+
+        AtomicFileWriter(durable = false).write(source, dest)
+
+        assertThat(dest.readText()).isEqualTo("fast but crash-safe")
+        assertThat(dest.getLastModifiedTime().toInstant().epochSecond).isEqualTo(mtime.epochSecond)
+    }
+
+    @Test
+    fun `relaxed-durability abort leaves the original target intact and no temp files behind`(@TempDir dir: Path) {
+        val dest = dir.resolve("important.txt").apply { writeText("PRECIOUS ORIGINAL") }
+        val failing = object : InputStream() {
+            private var n = 0
+            override fun read(): Int {
+                if (n++ >= 5) throw IOException("simulated abort")
+                return 'z'.code
+            }
+        }
+
+        assertThatThrownBy { AtomicFileWriter(durable = false).write(failing, dest, FileTime.from(Instant.now())) }
+            .isInstanceOf(IOException::class.java)
+
+        assertThat(dest.readText()).isEqualTo("PRECIOUS ORIGINAL")
+        val litter = dir.listDirectoryEntries().map { it.fileName.toString() }
+            .filter { it.endsWith(".idxtmp") || it.endsWith(".idxbak") }
+        assertThat(litter).isEmpty()
+    }
+
+    @Test
     fun `abort mid-write leaves the original target intact and no temp files behind`(@TempDir dir: Path) {
         val dest = dir.resolve("important.txt").apply { writeText("PRECIOUS ORIGINAL") }
 

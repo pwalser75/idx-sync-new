@@ -75,7 +75,12 @@ class SyncApplication(
      * [verify] is set, every copied file is hashed and checked against the source before it replaces the
      * target. Returns whether the run succeeded.
      */
-    fun run(mode: SyncMode = SyncMode.SYNC, source: String? = null, verify: Boolean = false): Boolean {
+    fun run(
+        mode: SyncMode = SyncMode.SYNC,
+        source: String? = null,
+        verify: Boolean = false,
+        fast: Boolean = false,
+    ): Boolean {
         val startNs = System.nanoTime()
         val allPairs = scan()
         if (allPairs.isEmpty()) return true // nothing configured — not an error
@@ -100,7 +105,7 @@ class SyncApplication(
         // so no write can ever land inside any source, even a target nested in another pair's source.
         val protected = allPairs.map { it.source }
         val copyNs = System.nanoTime()
-        val result = ui.copyProgress(totalBytes(changes)) { listener -> synchronizer(verify).sync(changes, protected, listener) }
+        val result = ui.copyProgress(totalBytes(changes)) { listener -> synchronizer(verify, fast).sync(changes, protected, listener) }
         val copySeconds = elapsedSeconds(copyNs)
         ui.report(mode, result, elapsedSeconds(startNs))
         ui.phaseTimings(scanSeconds, compareSeconds, copySeconds, result.bytesTransferred)
@@ -171,9 +176,16 @@ class SyncApplication(
         return changes.filter { it.relativePath == prefix || it.relativePath.startsWith(prefix) }
     }
 
-    /** A verifying synchronizer when [verify] is on, otherwise the injected default. */
-    private fun synchronizer(verify: Boolean): FileSynchronizer =
-        if (verify) FileSynchronizer(AtomicFileWriter(verify = true)) else synchronizer
+    /**
+     * The synchronizer to use for this run. [verify] hash-checks every copy (implies durable writes);
+     * [fast] trades power-loss durability for speed by skipping the per-file fsync (still crash-safe against
+     * an abort). With neither flag the injected default is reused.
+     */
+    private fun synchronizer(verify: Boolean, fast: Boolean): FileSynchronizer = when {
+        verify -> FileSynchronizer(AtomicFileWriter(verify = true))
+        fast -> FileSynchronizer(AtomicFileWriter(durable = false))
+        else -> synchronizer
+    }
 
     /**
      * A message when the bytes to be written won't fit on a destination filesystem, or `null` if they will.
@@ -182,9 +194,16 @@ class SyncApplication(
      */
     private fun insufficientSpace(changes: List<FileChange>): String? {
         val perStore = HashMap<java.nio.file.FileStore, Long>()
+        // `getFileStore` is a syscall (and `nearestExisting` walks the tree); resolving it per file across
+        // tens of thousands of changes is a long, pointless stall before the copy even starts. All files
+        // under one directory share a store, so cache by parent directory — one lookup per folder, not file.
+        val storeByDir = HashMap<Path, java.nio.file.FileStore?>()
         for (change in changes) {
             if (change.action != SyncAction.CREATE && change.action != SyncAction.UPDATE) continue
-            val store = runCatching { Files.getFileStore(nearestExisting(change.destination)) }.getOrNull() ?: continue
+            val dir = change.destination.parent ?: change.destination
+            val store = storeByDir.getOrPut(dir) {
+                runCatching { Files.getFileStore(nearestExisting(change.destination)) }.getOrNull()
+            } ?: continue
             perStore.merge(store, change.size) { a, b -> a + b }
         }
         for ((store, required) in perStore) {
@@ -216,7 +235,7 @@ class SyncApplication(
         // per-pair "Changes since last sync" summaries.
         ui.spinner("Comparing") { detail ->
             pairs.map { pair ->
-                pair to diffEngine.diff(pair, mode) { path -> detail("${pair.name}: $path") }
+                pair to diffEngine.diff(pair, mode) { status -> detail("${pair.name} — $status") }
             }
         }
 

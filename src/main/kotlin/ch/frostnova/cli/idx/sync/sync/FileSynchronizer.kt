@@ -50,16 +50,25 @@ class FileSynchronizer(private val writer: AtomicFileWriter = AtomicFileWriter()
         listener: SyncListener = SyncListener.NONE,
     ): SyncResult {
         val protected = protectedRoots.map { realLocation(it) }
+        // The read-only guard resolves symlinks in each destination via `toRealPath` — a syscall. Files in
+        // the same directory resolve to the same real parent, so we cache it per parent directory: with many
+        // files under a handful of folders this turns one `toRealPath` per file into one per directory.
+        val realParentCache = HashMap<Path, Path>()
         var result = SyncResult.EMPTY
         changes.forEachIndexed { index, change ->
             listener.onChangeStart(change, index, changes.size)
-            result += apply(change, protected, listener)
+            result += apply(change, protected, realParentCache, listener)
         }
         return result
     }
 
-    private fun apply(change: FileChange, protected: List<Path>, listener: SyncListener): SyncResult {
-        if (change.action != SyncAction.SKIP && isProtected(change.destination, protected)) {
+    private fun apply(
+        change: FileChange,
+        protected: List<Path>,
+        realParentCache: MutableMap<Path, Path>,
+        listener: SyncListener,
+    ): SyncResult {
+        if (change.action != SyncAction.SKIP && isProtected(change.destination, protected, realParentCache)) {
             return SyncResult(errors = listOf("refused: ${change.destination} is within a read-only source"))
         }
         return when (change.action) {
@@ -69,9 +78,23 @@ class FileSynchronizer(private val writer: AtomicFileWriter = AtomicFileWriter()
         }
     }
 
-    private fun isProtected(destination: Path, protected: List<Path>): Boolean {
+    private fun isProtected(
+        destination: Path,
+        protected: List<Path>,
+        realParentCache: MutableMap<Path, Path>,
+    ): Boolean {
         if (protected.isEmpty()) return false
-        val dest = realLocation(destination)
+        // Fast path: resolve the (cached) real *parent* and re-append the file name. Once the parent's
+        // symlinks are resolved, appending a plain leaf gives the same `startsWith` answer as resolving the
+        // whole path — with far fewer `toRealPath` syscalls when many files share a directory. This is only
+        // valid when the leaf itself isn't a symlink; if it is (e.g. deleting a target-side link that points
+        // into the source), or the destination has no parent, fall back to resolving the full path.
+        val parent = destination.parent
+        val dest = if (parent != null && !Files.isSymbolicLink(destination)) {
+            realParentCache.getOrPut(parent) { realLocation(parent) }.resolve(destination.fileName)
+        } else {
+            realLocation(destination)
+        }
         return protected.any { dest.startsWith(it) }
     }
 

@@ -37,6 +37,15 @@ class AtomicFileWriter(
     private val bufferSize: Int = 1 shl 20,
     /** When true, the bytes written to disk are hashed and compared against the source before the rename. */
     private val verify: Boolean = false,
+    /**
+     * When true (the default), each written file is fsync'd to the physical disk before the atomic rename,
+     * so even a power loss can never surface a partially-written target. Set false for a faster, still
+     * **crash-safe** copy that trades power-loss durability for speed: the temp→backup→rename dance still
+     * guarantees a process abort never corrupts the target, but freshly-written bytes may not have reached
+     * the platter if the machine loses power mid-run. The big win is on spinning disks and when source and
+     * target share one device, where a per-file fsync forces a seek/rotation stall on every single file.
+     */
+    private val durable: Boolean = true,
 ) {
 
     /**
@@ -62,7 +71,8 @@ class AtomicFileWriter(
                     transfer(src, dst, onBytes)
                     // force content + metadata to the physical disk before we rely on the rename — a power
                     // loss after the rename must never surface a target that was never fully persisted.
-                    dst.force(true)
+                    // Skipped in relaxed-durability mode, where the rename still keeps aborts crash-safe.
+                    if (durable) dst.force(true)
                 }
             }
         }
@@ -88,7 +98,7 @@ class AtomicFileWriter(
                     }
                 }
                 output.flush()
-                output.fd.sync()
+                if (durable) output.fd.sync()
             }
             // optional integrity check: the file now on disk must match the bytes we streamed
             if (digest != null) verifyMatches(temp, digest.digest())
@@ -103,8 +113,11 @@ class AtomicFileWriter(
      * restored and no temp/backup files are left behind.
      */
     private fun writeAtomically(destination: Path, lastModified: FileTime, fill: (Path) -> Unit) {
+        // Only create the parent when it isn't already a directory: `createDirectories` on an existing tree
+        // still stats every ancestor, which is pure overhead once the directory exists — and with tens of
+        // thousands of files sharing a handful of parents, that adds up (especially on a slow/spinning disk).
         val dir = destination.parent
-        if (dir != null) Files.createDirectories(dir)
+        if (dir != null && !Files.isDirectory(dir)) Files.createDirectories(dir)
 
         val temp = sibling(destination, TEMP_SUFFIX)
         val backup = sibling(destination, BACKUP_SUFFIX)

@@ -15,6 +15,7 @@ import com.github.ajalt.mordant.rendering.TextStyles.bold
 import com.github.ajalt.mordant.table.grid
 import com.github.ajalt.mordant.terminal.Terminal
 import com.github.ajalt.mordant.widgets.Spinner
+import com.github.ajalt.mordant.widgets.progress.ProgressLayoutScope
 import com.github.ajalt.mordant.widgets.progress.percentage
 import com.github.ajalt.mordant.widgets.progress.progressBar
 import com.github.ajalt.mordant.widgets.progress.progressBarContextLayout
@@ -36,16 +37,15 @@ class ConsoleUi(val terminal: Terminal = Terminal(), private val ascii: Boolean 
 
     // Palette (user-picked), semantically mapped: main = scan/sync, create = create/success,
     // update = update, delete = delete, error = error, ids = ids/accents, muted = muted.
-    private val main   = TextColors.rgb("a8a29e")
+    private val main = TextColors.rgb("a8a29e")
     private val create = TextColors.rgb("84cc16")
     private val update = TextColors.rgb("fbbf24")
     private val delete = TextColors.rgb("fb923c")
     private val errorColor = TextColors.rgb("f87171")
-    private val ids    = TextColors.rgb("60a5fa")
-    private val muted  = TextColors.rgb("9e9e9e")
+    private val ids = TextColors.rgb("60a5fa")
+    private val muted = TextColors.rgb("9e9e9e")
 
     // Status icons — Unicode by default, ASCII fallbacks when requested.
-    private val iconRocket = if (ascii) "" else "🚀"
     private val iconSync = if (ascii) ">" else "🔄"
     private val iconCheck = if (ascii) "[OK]" else "✅"
     private val iconError = if (ascii) "[x]" else "❌"
@@ -54,15 +54,8 @@ class ConsoleUi(val terminal: Terminal = Terminal(), private val ascii: Boolean 
     // ---- static output --------------------------------------------------------------------------------
 
     fun logo() {
-        val banner = ConsoleUi::class.java.getResourceAsStream(BANNER)
-            ?.bufferedReader()?.use { it.readText() }
-            ?.trimEnd('\n')
-        if (banner.isNullOrEmpty()) {
-            val title = if (iconRocket.isEmpty()) "Idx SYNC" else "$iconRocket Idx SYNC"
-            terminal.println((bold + main)(title))
-        } else {
-            banner.lines().forEach { terminal.println((bold + main)(it)) }
-        }
+        ConsoleUi::class.java.getResourceAsStream(BANNER)?.bufferedReader()?.use { it.readText() }
+            ?.trimEnd('\n')?.lines()?.forEach { terminal.println((bold + main)(it)) }
         terminal.println()
     }
 
@@ -75,9 +68,17 @@ class ConsoleUi(val terminal: Terminal = Terminal(), private val ascii: Boolean 
         cmd("sync", "[source-folder]", "synchronize all pairs, or only the given source folder (by id, name or path)")
         cmd("source", "[path] [name]", "add the given path as a source with the given name")
         cmd("target", "[path] [source-folder-id]", "add the given path as a target for the source with the given id")
-        cmd("pair", "[source-folder] [target-folder]", "set up the source folder and a target folder mirroring it, in one step")
+        cmd(
+            "pair",
+            "[source-folder] [target-folder]",
+            "set up the source folder and a target folder mirroring it, in one step"
+        )
         cmd("remove", "[path]", "remove the given path as source or target folder (deletes the .idxsync file)")
-        cmd("restore", "[source-folder] [sub-path]", "restore a source folder (by id, name or path) from its target (asks first, never deletes)")
+        cmd(
+            "restore",
+            "[source-folder] [sub-path]",
+            "restore a source folder (by id, name or path) from its target (asks first, never deletes)"
+        )
         cmd("version", "", "print the version")
         cmd("demo", "[duration]", "simulate a run to showcase the UI, e.g. demo 15s")
         line(muted("Global: --ascii (plain-ASCII output), --version"))
@@ -207,9 +208,39 @@ class ConsoleUi(val terminal: Terminal = Terminal(), private val ascii: Boolean 
 
     // ---- progress -------------------------------------------------------------------------------------
 
+    /**
+     * A progress bar in the app's palette, shared by every determinate phase. In ASCII mode it uses plain
+     * `-`/`>`/`=` glyphs for legacy consoles; otherwise Mordant's default block glyphs. No explicit width, so
+     * the bar is an expanding column that grows to fill whatever width is left after the other cells — but
+     * only up to the terminal width Mordant currently knows about, so callers must [refreshTerminalSize]
+     * first (see that function for why).
+     */
+    private fun ProgressLayoutScope<*>.themedProgressBar() =
+        if (ascii) progressBar(
+            pendingChar = "-",
+            separatorChar = ">",
+            completeChar = "=",
+            completeStyle = main,
+            finishedStyle = main
+        )
+        else progressBar(completeStyle = main, finishedStyle = main)
+
+    /**
+     * Re-detect the terminal width before a progress phase. Mordant samples the size once when the [Terminal]
+     * is constructed and — on the JVM — never refreshes it on its own (`shouldAutoUpdateSize()` is `false`, so
+     * even printing doesn't re-measure). Our terminal is built at start-up, long before a sync runs, and in
+     * some hosts (notably web/cloud workspace terminals) the size reported that early is a stale default (~80)
+     * while the real window is far wider. Without this, the expanding bar would stop at that stale width and
+     * leave the rest of the terminal blank. Re-measuring here also picks up a window resize between phases.
+     */
+    private fun refreshTerminalSize() {
+        runCatching { terminal.updateSize() }
+    }
+
     /** Indeterminate phase (comparing) with a spinner; cleared when done. */
     fun <T> spinner(title: String, block: (setDetail: (String) -> Unit) -> T): T {
-        val layout = progressBarContextLayout<String> {
+        refreshTerminalSize()
+        val layout = progressBarContextLayout {
             spinner(if (ascii) Spinner.Lines(style = ids) else Spinner.Dots(style = ids))
             text(align = TextAlign.LEFT) { context }
         }
@@ -225,12 +256,11 @@ class ConsoleUi(val terminal: Terminal = Terminal(), private val ascii: Boolean 
 
     /** Determinate phase reporting a 0..1 fraction (scanning); a full-width bar, cleared when done. */
     fun <T> fractionProgress(title: String, block: (report: (Double, Any) -> Unit) -> T): T {
+        refreshTerminalSize()
         val info = 40
-        val layout = progressBarContextLayout<String> {
+        val layout = progressBarContextLayout {
             text(align = TextAlign.LEFT) { context }
-            // No explicit width -> the bar expands to fill the remaining terminal width.
-            if (ascii) progressBar(pendingChar = "-", separatorChar = ">", completeChar = "=", completeStyle = main, finishedStyle = main)
-            else progressBar(completeStyle = main, finishedStyle = main)
+            themedProgressBar()
             percentage()
         }
         val anim = layout.animateOnThread(terminal, title, TICKS)
@@ -252,12 +282,11 @@ class ConsoleUi(val terminal: Terminal = Terminal(), private val ascii: Boolean 
      * done so the caller can print the report in its place. Returns the caller's [SyncResult].
      */
     fun copyProgress(totalBytes: Long, run: (SyncListener) -> SyncResult): SyncResult {
+        refreshTerminalSize()
         val info = 24
-        val layout = progressBarContextLayout<String> {
+        val layout = progressBarContextLayout {
             text(align = TextAlign.LEFT) { context }
-            // No explicit width -> the bar expands to fill the remaining terminal width.
-            if (ascii) progressBar(pendingChar = "-", separatorChar = ">", completeChar = "=", completeStyle = main, finishedStyle = main)
-            else progressBar(completeStyle = main, finishedStyle = main)
+            themedProgressBar()
             percentage()
             speed("B/s")
             timeRemaining()

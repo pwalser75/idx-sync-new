@@ -45,8 +45,9 @@ class Sync(private val app: SyncApplication) : CliktCommand() {
     override fun help(context: Context) = "Synchronize all matching folder pairs, or only the given source folder"
     private val source by argument(name = "source-folder", help = "only synchronize this source folder, by folder-id, name or path").optional()
     private val verify by option("--verify", help = "hash each copied file and check it against the source before replacing the target").flag()
+    private val fast by option("--fast", help = "skip the per-file fsync for a much faster copy (still crash-safe, but not power-loss durable)").flag()
     override fun run() {
-        if (!app.run(SyncMode.SYNC, source, verify)) throw ProgramResult(1)
+        if (!app.run(SyncMode.SYNC, source, verify, fast)) throw ProgramResult(1)
     }
 }
 

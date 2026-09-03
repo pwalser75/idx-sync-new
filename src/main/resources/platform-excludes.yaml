@@ -21,6 +21,20 @@ platforms:
     globs:
       - "*.bak"
 
+  # Developer artifacts that don't belong in a backup: version-control metadata and regenerable
+  # dependency/cache directories (excluding a directory prunes its whole subtree). NOTE for a *backup*
+  # tool — excluding VCS metadata means repository history is NOT preserved by a sync; that is intentional
+  # here. Keep only low-false-positive, regenerable names in this always-on set: things like build / dist /
+  # target have real-file false positives and belong in a folder's own exclude-patterns, not here.
+  development:
+    exact-names:
+      - node_modules
+      - __pycache__
+      - .git
+      - .svn
+      - .hg
+      - CVS
+
   windows:
     exact-names:
       - Thumbs.db
