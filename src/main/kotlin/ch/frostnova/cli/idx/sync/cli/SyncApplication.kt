@@ -189,8 +189,9 @@ class SyncApplication(
 
     /**
      * A message when the bytes to be written won't fit on a destination filesystem, or `null` if they will.
-     * Sizes are summed per file store; an UPDATE is counted at full size because the crash-safe writer keeps
-     * the old file until the new one is complete, so peak usage is the new size.
+     * Sizes are summed per file store. An UPDATE reserves the incoming size **plus the existing target's
+     * size**: the crash-safe writer keeps the old file on disk until the new copy is complete, so the peak
+     * footprint is old + new. (A CREATE only ever adds the incoming size.)
      */
     private fun insufficientSpace(changes: List<FileChange>): String? {
         val perStore = HashMap<java.nio.file.FileStore, Long>()
@@ -204,7 +205,7 @@ class SyncApplication(
             val store = storeByDir.getOrPut(dir) {
                 runCatching { Files.getFileStore(nearestExisting(change.destination)) }.getOrNull()
             } ?: continue
-            perStore.merge(store, change.size) { a, b -> a + b }
+            perStore.merge(store, change.size + existingTargetSize(change)) { a, b -> a + b }
         }
         for ((store, required) in perStore) {
             val usable = runCatching { store.usableSpace }.getOrDefault(Long.MAX_VALUE)
@@ -214,6 +215,14 @@ class SyncApplication(
         }
         return null
     }
+
+    /**
+     * The extra bytes the crash-safe writer holds on top of the incoming copy: an UPDATE keeps the old
+     * target until the new one is fully written, so it still occupies its size during the copy. 0 otherwise.
+     */
+    private fun existingTargetSize(change: FileChange): Long =
+        if (change.action == SyncAction.UPDATE) runCatching { Files.size(change.destination) }.getOrDefault(0L)
+        else 0L
 
     /** The nearest ancestor of [path] that exists (so its file store can be queried before we create it). */
     private fun nearestExisting(path: Path): Path {

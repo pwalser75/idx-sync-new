@@ -2,6 +2,7 @@ package ch.frostnova.cli.idx.sync.scan
 
 import java.io.IOException
 import java.nio.file.AccessDeniedException
+import java.nio.file.DirectoryIteratorException
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
@@ -62,6 +63,12 @@ class FileTreeWalker {
         val children: List<Path> = try {
             Files.newDirectoryStream(path).use { it.sorted() }
         } catch (_: AccessDeniedException) {
+            emptyList()
+        } catch (ex: DirectoryIteratorException) {
+            // An I/O error *during* iteration surfaces as this unchecked exception (wrapping the IOException),
+            // not as a plain IOException. Without catching it a single bad directory would abort the whole
+            // scan; report it like any other per-directory error and keep walking.
+            onError(path, ex.cause as? IOException ?: IOException(ex))
             emptyList()
         } catch (ex: IOException) {
             onError(path, ex)

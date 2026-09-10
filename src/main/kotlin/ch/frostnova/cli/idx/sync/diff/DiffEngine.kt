@@ -68,8 +68,13 @@ class DiffEngine(
                 }
             }, "idx-diff-dest").apply { start() }
 
-            origin = enumerate(originRoot, filter, scanSource)
-            destWalk.join()
+            // Join in a `finally` so the dest walk is never leaked (and its failure never silently dropped)
+            // even when the origin walk throws.
+            try {
+                origin = enumerate(originRoot, filter, scanSource)
+            } finally {
+                destWalk.join()
+            }
             destFailure?.let { throw it }
             dest = destTree!!
         }

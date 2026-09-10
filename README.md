@@ -52,6 +52,8 @@ legacy terminals. `sync`/`restore` exit non-zero when a run fails, so they compo
 deleted (only read). A hard safety net refuses any write/delete that would land inside a source folder.
 `restore` is the only mode that writes to a source, and even then it only creates/updates — it never
 deletes. It requires a source-folder-id, shows the differences, and asks for confirmation before writing.
+Its optional `<sub-path>` must be a valid relative path (e.g. `photos/2026`); malformed input is not
+normalized and aborts the command with an error rather than restoring anything.
 
 Scanning is a quick, shallow sweep of the filesystem roots and the current directory (down to a bounded
 depth), with a progress bar that clears when done — it then lists the discovered markers and the matching

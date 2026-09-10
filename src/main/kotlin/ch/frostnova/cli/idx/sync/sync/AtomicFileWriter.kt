@@ -140,8 +140,9 @@ class AtomicFileWriter(
                 throw ex
             }
 
-            // 4. drop the backup
-            if (hadTarget) backup.deleteIfExists()
+            // 4. drop the backup. Cleanup failure must never turn an already-successful replace into a
+            // reported error — the target is correct; at worst a stale `.idxbak` is left (and ignored).
+            if (hadTarget) runCatching { backup.deleteIfExists() }
         } finally {
             runCatching { temp.deleteIfExists() }
         }
